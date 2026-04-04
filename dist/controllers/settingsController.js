@@ -1,0 +1,24 @@
+var __importDefault=this&&this.__importDefault||function(t){return t&&t.__esModule?t:{default:t}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.updateSetting=exports.deleteSetting=exports.updateSettingById=exports.createSetting=exports.getSettingById=exports.getAllSettings=exports.getSettingByKey=exports.getPublicSettings=void 0;let database_1=__importDefault(require("../config/database")),getPublicSettings=async(t,s)=>{try{var r=await database_1.default.query(`
+      SELECT setting_key, setting_value, description
+      FROM settings
+      WHERE is_public = true
+      ORDER BY setting_key
+    `);let e={};r.rows.forEach(t=>{e[t.setting_key]=t.setting_value||""}),s.json({settings:e})}catch(t){console.error("Get settings error:",t),s.status(500).json({error:"Failed to fetch settings"})}},getSettingByKey=(exports.getPublicSettings=getPublicSettings,async(t,e)=>{try{var s=t.params.key,r=await database_1.default.query(`SELECT setting_key, setting_value, description
+       FROM settings
+       WHERE setting_key = $1 AND is_public = true`,[s]);if(0===r.rows.length)return e.status(404).json({error:"Setting not found"});e.json({key:r.rows[0].setting_key,value:r.rows[0].setting_value||"",description:r.rows[0].description})}catch(t){console.error("Get setting error:",t),e.status(500).json({error:"Failed to fetch setting"})}}),getAllSettings=(exports.getSettingByKey=getSettingByKey,async(t,e)=>{try{var s=await database_1.default.query(`SELECT id, setting_key, setting_value, description, is_public, created_at, updated_at
+       FROM settings
+       ORDER BY setting_key ASC`);e.json({data:s.rows})}catch(t){console.error("Get all settings error:",t),e.status(500).json({error:"Failed to fetch settings"})}}),getSettingById=(exports.getAllSettings=getAllSettings,async(t,e)=>{try{var s=t.params.id,r=await database_1.default.query(`SELECT id, setting_key, setting_value, description, is_public, created_at, updated_at
+       FROM settings
+       WHERE id = $1`,[s]);if(0===r.rows.length)return e.status(404).json({error:"Setting not found"});e.json({data:r.rows[0]})}catch(t){console.error("Get setting by id error:",t),e.status(500).json({error:"Failed to fetch setting"})}}),createSetting=(exports.getSettingById=getSettingById,async(t,e)=>{try{var{setting_key:s,setting_value:r,description:i,is_public:a}=t.body;if(!s)return e.status(400).json({error:"setting_key is required"});var n=await database_1.default.query(`INSERT INTO settings (setting_key, setting_value, description, is_public)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, setting_key, setting_value, description, is_public, created_at, updated_at`,[String(s).trim(),r??"",i??null,!0===a]);e.status(201).json({data:n.rows[0]})}catch(t){if("23505"===t.code)return e.status(400).json({error:"Setting key already exists"});console.error("Create setting error:",t),e.status(500).json({error:"Failed to create setting"})}}),updateSettingById=(exports.createSetting=createSetting,async(t,e)=>{try{var s=t.params.id,{setting_key:r,setting_value:i,description:a,is_public:n}=t.body,o=await database_1.default.query("SELECT * FROM settings WHERE id = $1",[s]);if(0===o.rows.length)return e.status(404).json({error:"Setting not found"});var d=await database_1.default.query(`UPDATE settings
+       SET setting_key = $1,
+           setting_value = $2,
+           description = $3,
+           is_public = $4,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $5
+       RETURNING id, setting_key, setting_value, description, is_public, created_at, updated_at`,[void 0!==r?String(r).trim():o.rows[0].setting_key,void 0!==i?i:o.rows[0].setting_value,void 0!==a?a:o.rows[0].description,void 0!==n?n:o.rows[0].is_public,s]);e.json({data:d.rows[0]})}catch(t){if("23505"===t.code)return e.status(400).json({error:"Setting key already exists"});console.error("Update setting by id error:",t),e.status(500).json({error:"Failed to update setting"})}}),deleteSetting=(exports.updateSettingById=updateSettingById,async(t,e)=>{try{var s=t.params.id;if(0===(await database_1.default.query("DELETE FROM settings WHERE id = $1 RETURNING id",[s])).rows.length)return e.status(404).json({error:"Setting not found"});e.json({message:"Setting deleted successfully"})}catch(t){console.error("Delete setting error:",t),e.status(500).json({error:"Failed to delete setting"})}}),updateSetting=(exports.deleteSetting=deleteSetting,async(t,e)=>{try{var s=t.params.key,r=t.body.value,i=await database_1.default.query(`UPDATE settings
+       SET setting_value = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE setting_key = $2
+       RETURNING setting_key, setting_value, description`,[r,s]);if(0===i.rows.length)return e.status(404).json({error:"Setting not found"});e.json({data:i.rows[0]})}catch(t){console.error("Update setting error:",t),e.status(500).json({error:"Failed to update setting"})}});exports.updateSetting=updateSetting;

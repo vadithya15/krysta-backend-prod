@@ -1,0 +1,41 @@
+var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0});let database_1=__importDefault(require("../config/database")),configService_1=__importDefault(require("./configService"));class OrganizationService{async createOrganization(e,a){var r=await database_1.default.connect();try{if(await r.query("BEGIN"),0<(await r.query("SELECT id FROM organizations WHERE slug = $1",[e.slug])).rows.length)throw new Error(`Organization slug '${e.slug}' already exists`);var i=await r.query(`INSERT INTO organizations 
+          (name, slug, description, website, industry, contact_email, contact_phone, 
+           subscription_tier, max_users, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING *`,[e.name,e.slug,e.description||null,e.website||null,e.industry||null,e.contact_email||null,e.contact_phone||null,e.subscription_tier||"basic",e.max_users||100,a||null]),n=i.rows[0].id;return await this.initializeDefaultRoles(r,n),await this.initializeDefaultHierarchy(r,n),await this.initializeDefaultSettings(r,n),await r.query("COMMIT"),configService_1.default.invalidateCache(n),i.rows[0]}catch(e){throw await r.query("ROLLBACK"),console.error("Error creating organization:",e),e}finally{r.release()}}async initializeDefaultRoles(e,a){var r;for(r of[{name:"Board of Directors",display_name:"Board of Directors",hierarchy_level:1,hierarchy_label:"Board",color_code:"#DC2626",icon_name:"crown"},{name:"Zonal Manager",display_name:"Zonal Manager",hierarchy_level:2,hierarchy_label:"Zonal",color_code:"#F59E0B",icon_name:"map"},{name:"Area Sales Manager",display_name:"Area Sales Manager",hierarchy_level:3,hierarchy_label:"Area",color_code:"#3B82F6",icon_name:"briefcase"},{name:"Sales Officer",display_name:"Sales Officer",hierarchy_level:4,hierarchy_label:"Officer",color_code:"#10B981",icon_name:"user"},{name:"Sales Trainee",display_name:"Sales Trainee",hierarchy_level:5,hierarchy_label:"Trainee",color_code:"#8B5CF6",icon_name:"user-plus"},{name:"Admin",display_name:"System Administrator",hierarchy_level:10,hierarchy_label:"Admin",color_code:"#000000",icon_name:"settings"}])await e.query(`INSERT INTO role_definitions 
+          (organization_id, name, display_name, hierarchy_level, hierarchy_label, color_code, icon_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,[a,r.name,r.display_name,r.hierarchy_level,r.hierarchy_label,r.color_code,r.icon_name])}async initializeDefaultHierarchy(e,a){var r;for(r of[{level_name:"board",display_name:"Board",level_number:1},{level_name:"zone",display_name:"Zone",level_number:2},{level_name:"region",display_name:"Region",level_number:3},{level_name:"area",display_name:"Area",level_number:4},{level_name:"department",display_name:"Department",level_number:5}])await e.query(`INSERT INTO hierarchy_level_definitions 
+          (organization_id, level_name, display_name, level_number)
+         VALUES ($1, $2, $3, $4)`,[a,r.level_name,r.display_name,r.level_number])}async initializeDefaultSettings(e,a){var r;for(r of[{key:"enable_reporting",value:"true"},{key:"enable_analytics",value:"true"},{key:"enable_hierarchy_management",value:"true"},{key:"auto_approve_expenses",value:"false"},{key:"timezone",value:"UTC"}])await e.query(`INSERT INTO organization_settings 
+          (organization_id, setting_key, setting_value)
+         VALUES ($1, $2, $3)`,[a,r.key,r.value])}async updateOrganization(a,r){try{var i=[],n=[];let e=1;if(void 0!==r.name&&(i.push("name = $"+e++),n.push(r.name)),void 0!==r.description&&(i.push("description = $"+e++),n.push(r.description)),void 0!==r.website&&(i.push("website = $"+e++),n.push(r.website)),void 0!==r.industry&&(i.push("industry = $"+e++),n.push(r.industry)),void 0!==r.contact_email&&(i.push("contact_email = $"+e++),n.push(r.contact_email)),void 0!==r.contact_phone&&(i.push("contact_phone = $"+e++),n.push(r.contact_phone)),void 0!==r.subscription_tier&&(i.push("subscription_tier = $"+e++),n.push(r.subscription_tier)),void 0!==r.max_users&&(i.push("max_users = $"+e++),n.push(r.max_users)),void 0!==r.theme_color&&(i.push("theme_color = $"+e++),n.push(r.theme_color)),void 0!==r.is_active&&(i.push("is_active = $"+e++),n.push(r.is_active)),0===i.length)return(await database_1.default.query("SELECT * FROM organizations WHERE id = $1",[a])).rows[0];i.push("updated_at = CURRENT_TIMESTAMP"),n.push(a);var t=await database_1.default.query(`UPDATE organizations SET ${i.join(", ")} WHERE id = $${e} RETURNING *`,n);return configService_1.default.invalidateCache(a),t.rows[0]}catch(e){throw console.error("Error updating organization:",e),e}}async assignUserToOrganization(e,a,r,i){try{await database_1.default.query("UPDATE users SET organization_id = $1 WHERE id = $2",[e,a]),await database_1.default.query(`INSERT INTO hierarchy_assignments 
+          (organization_id, user_id, hierarchy_node_id, role_definition_id, is_primary)
+         VALUES ($1, $2, $3, $4, true)
+         ON CONFLICT (organization_id, user_id, is_primary) 
+         DO UPDATE SET role_definition_id = $4, hierarchy_node_id = $3`,[e,a,i||null,r]),configService_1.default.invalidateCache(e)}catch(e){throw console.error("Error assigning user to organization:",e),e}}async createOrUpdateRole(e,a){try{var r;if(a.name&&a.display_name)return r=await database_1.default.query(`INSERT INTO role_definitions 
+          (organization_id, name, display_name, hierarchy_level, hierarchy_label, 
+           can_approve_orders, can_approve_payments, can_approve_expenses, can_modify_expenses,
+           can_set_targets, can_view_analytics, can_manage_users, can_manage_roles,
+           color_code, icon_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         ON CONFLICT (organization_id, name) 
+         DO UPDATE SET 
+           display_name = $3,
+           hierarchy_level = $4,
+           hierarchy_label = $5,
+           can_approve_orders = $6,
+           can_approve_payments = $7,
+           can_approve_expenses = $8,
+           can_modify_expenses = $9,
+           can_set_targets = $10,
+           can_view_analytics = $11,
+           can_manage_users = $12,
+           can_manage_roles = $13,
+           color_code = $14,
+           icon_name = $15
+         RETURNING *`,[e,a.name,a.display_name,a.hierarchy_level||1,a.hierarchy_label||a.name,a.can_approve_orders||!1,a.can_approve_payments||!1,a.can_approve_expenses||!1,a.can_modify_expenses||!1,a.can_set_targets||!1,a.can_view_analytics||!1,a.can_manage_users||!1,a.can_manage_roles||!1,a.color_code||"#3B82F6",a.icon_name||"user"]),configService_1.default.invalidateCache(e),r.rows[0];throw new Error("Role name and display_name are required")}catch(e){throw console.error("Error creating/updating role:",e),e}}async getOrganizationUsers(e){try{return(await database_1.default.query(`SELECT u.id, u.name, u.email, u.phone, rd.name as role_name, rd.display_name as role_display_name
+         FROM users u
+         LEFT JOIN hierarchy_assignments ha ON u.id = ha.user_id AND ha.organization_id = $1 AND ha.is_primary = true
+         LEFT JOIN role_definitions rd ON ha.role_definition_id = rd.id
+         WHERE u.organization_id = $1
+         ORDER BY u.name`,[e])).rows}catch(e){throw console.error("Error getting organization users:",e),e}}async getOrganizationStats(e){try{var a=await database_1.default.query("SELECT COUNT(*) as count FROM users WHERE organization_id = $1",[e]),r=await database_1.default.query("SELECT COUNT(*) as count FROM orders WHERE organization_id = $1",[e]),i=await database_1.default.query("SELECT COUNT(*) as count FROM travel_expenses WHERE organization_id = $1",[e]),n=await database_1.default.query("SELECT COUNT(*) as count FROM role_definitions WHERE organization_id = $1 AND is_active = true",[e]);return{totalUsers:parseInt(a.rows[0].count),totalOrders:parseInt(r.rows[0].count),totalExpenses:parseInt(i.rows[0].count),activeRoles:parseInt(n.rows[0].count)}}catch(e){throw console.error("Error getting organization stats:",e),e}}}exports.default=new OrganizationService;
