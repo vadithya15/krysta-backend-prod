@@ -130,6 +130,105 @@ const toBooleanOrDefault = (value, fallback) => {
         return false;
     return fallback;
 };
+const normalizedSqlMatch = (column, paramIndex) => {
+    return `REGEXP_REPLACE(LOWER(COALESCE(${column}::text, '')), '[^a-z0-9]+', '', 'g') = REGEXP_REPLACE(LOWER($${paramIndex}::text), '[^a-z0-9]+', '', 'g')`;
+};
+const getDealerUploadLookupContext = async (organizationId) => {
+    return {
+        organizationId,
+        regionsHaveOrganizationId: await hasTableColumn('regions', 'organization_id'),
+        regionsHaveCode: await hasTableColumn('regions', 'code'),
+        areasHaveOrganizationId: await hasTableColumn('areas', 'organization_id'),
+        areasHaveCode: await hasTableColumn('areas', 'code'),
+        areasHaveRegionId: await hasTableColumn('areas', 'region_id'),
+        regionCache: new Map(),
+        areaCache: new Map(),
+    };
+};
+const findRegionIdByName = async (value, lookupContext) => {
+    const regionName = emptyToNull(value);
+    if (regionName === null)
+        return null;
+    const cacheKey = String(regionName).trim().toLowerCase();
+    if (lookupContext.regionCache.has(cacheKey)) {
+        return lookupContext.regionCache.get(cacheKey) ?? null;
+    }
+    const params = [regionName];
+    const nameOrCodeClauses = [normalizedSqlMatch('name', 1)];
+    if (lookupContext.regionsHaveCode) {
+        nameOrCodeClauses.push(normalizedSqlMatch('code', 1));
+    }
+    let whereClause = `(${nameOrCodeClauses.join(' OR ')})`;
+    if (lookupContext.regionsHaveOrganizationId && lookupContext.organizationId) {
+        params.push(lookupContext.organizationId);
+        whereClause += ` AND organization_id = $${params.length}`;
+    }
+    const result = await database_1.default.query(`SELECT id
+     FROM regions
+     WHERE ${whereClause}
+     ORDER BY id
+     LIMIT 1`, params);
+    const regionId = result.rows[0]?.id ?? null;
+    lookupContext.regionCache.set(cacheKey, regionId);
+    return regionId;
+};
+const findAreaByName = async (value, regionId, lookupContext) => {
+    const areaName = emptyToNull(value);
+    if (areaName === null)
+        return null;
+    const cacheKey = `${String(areaName).trim().toLowerCase()}::${regionId ?? ''}`;
+    if (lookupContext.areaCache.has(cacheKey)) {
+        return lookupContext.areaCache.get(cacheKey) ?? null;
+    }
+    const params = [areaName];
+    const nameOrCodeClauses = [normalizedSqlMatch('name', 1)];
+    if (lookupContext.areasHaveCode) {
+        nameOrCodeClauses.push(normalizedSqlMatch('code', 1));
+    }
+    let whereClause = `(${nameOrCodeClauses.join(' OR ')})`;
+    if (lookupContext.areasHaveRegionId && regionId !== null) {
+        params.push(regionId);
+        whereClause += ` AND region_id = $${params.length}`;
+    }
+    if (lookupContext.areasHaveOrganizationId && lookupContext.organizationId) {
+        params.push(lookupContext.organizationId);
+        whereClause += ` AND organization_id = $${params.length}`;
+    }
+    const result = await database_1.default.query(`SELECT id, ${lookupContext.areasHaveRegionId ? 'region_id' : 'NULL::integer as region_id'}
+     FROM areas
+     WHERE ${whereClause}
+     ORDER BY id
+     LIMIT 2`, params);
+    if (result.rows.length > 1 && regionId === null) {
+        throw new Error(`Area '${areaName}' matched multiple areas. Provide region or area_id.`);
+    }
+    const area = result.rows[0] ? {
+        id: result.rows[0].id,
+        region_id: result.rows[0].region_id ?? null,
+    } : null;
+    lookupContext.areaCache.set(cacheKey, area);
+    return area;
+};
+const resolveDealerUploadLocationIds = async (row, dealerColumns, lookupContext) => {
+    if (dealerColumns.has('region_id') && toNumberOrNull(row.region_id) === null && emptyToNull(row.region) !== null) {
+        const regionId = await findRegionIdByName(row.region, lookupContext);
+        if (regionId === null) {
+            throw new Error(`Region '${row.region}' was not found. Create it first or provide region_id.`);
+        }
+        row.region_id = regionId;
+    }
+    if (dealerColumns.has('area_id') && toNumberOrNull(row.area_id) === null && emptyToNull(row.area) !== null) {
+        const regionId = dealerColumns.has('region_id') ? toNumberOrNull(row.region_id) : null;
+        const area = await findAreaByName(row.area, regionId, lookupContext);
+        if (area === null) {
+            throw new Error(`Area '${row.area}' was not found. Create it first or provide area_id.`);
+        }
+        row.area_id = area.id;
+        if (dealerColumns.has('region_id') && toNumberOrNull(row.region_id) === null && area.region_id !== null) {
+            row.region_id = area.region_id;
+        }
+    }
+};
 const getDealerUploadValue = (row, column) => {
     if (['city_id', 'state_id', 'area_id', 'region_id'].includes(column)) {
         return toNumberOrNull(row[column]);
@@ -599,6 +698,7 @@ const bulkUpsertDealers = async (req, res) => {
         }
         const dealerColumns = await getTableColumns('dealers');
         const organizationId = req.organization?.id;
+        const lookupContext = await getDealerUploadLookupContext(organizationId);
         const errors = [];
         const dealers = [];
         let created = 0;
@@ -615,6 +715,7 @@ const bulkUpsertDealers = async (req, res) => {
                     });
                     continue;
                 }
+                await resolveDealerUploadLocationIds(row, dealerColumns, lookupContext);
                 const result = await upsertDealerUploadRow(row, dealerColumns, organizationId);
                 if (result.action === 'created')
                     created++;
