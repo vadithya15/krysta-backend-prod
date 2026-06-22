@@ -1,12 +1,183 @@
-var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.approveExpenses=exports.getUserExpenses=exports.getPendingExpensesByUser=exports.getExpenseSummary=exports.deleteTravelExpense=exports.getTravelExpenseById=exports.getTravelExpenses=exports.updateRoleDailyAllowance=exports.getRoleDailyAllowances=exports.getDailyAllowanceForCurrentUser=exports.updateTravelExpense=exports.createTravelExpense=exports.getVehicleTypeById=exports.getVehicleTypes=void 0;let database_1=__importDefault(require("../config/database")),roleAccess_1=require("../middleware/roleAccess"),getStandardDailyAllowanceByUserId=async e=>{e=await database_1.default.query(`SELECT COALESCE(trda.allowance_amount, 0) AS daily_allowance
+"use strict";
+/**
+ * Travel Allowance (TA) Controller
+ * Handles vehicle types and travel expense calculations
+ */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.approveExpenses = exports.getUserExpenses = exports.getPendingExpensesByUser = exports.getExpenseSummary = exports.deleteTravelExpense = exports.getTravelExpenseById = exports.getTravelExpenses = exports.updateRoleDailyAllowance = exports.getRoleDailyAllowances = exports.getDailyAllowanceForCurrentUser = exports.updateTravelExpense = exports.createTravelExpense = exports.getVehicleTypeById = exports.getVehicleTypes = void 0;
+const database_1 = __importDefault(require("../config/database"));
+const roleAccess_1 = require("../middleware/roleAccess");
+const getStandardDailyAllowanceByUserId = async (userId) => {
+    const result = await database_1.default.query(`SELECT COALESCE(trda.allowance_amount, 0) AS daily_allowance
      FROM users u
      LEFT JOIN ta_role_daily_allowance trda ON trda.role_id = u.role_id
-     WHERE u.id = $1`,[e]);return 0!==e.rows.length&&parseFloat(e.rows[0].daily_allowance)||0},getVehicleTypes=async(e,a)=>{try{var r=await database_1.default.query("SELECT id, vehicle_name, rate_per_km, description FROM vehicle_types WHERE is_active = true ORDER BY id");a.json({vehicleTypes:r.rows})}catch(e){console.error("Error fetching vehicle types:",e),a.status(500).json({error:"Failed to fetch vehicle types"})}},getVehicleTypeById=(exports.getVehicleTypes=getVehicleTypes,async(e,a)=>{try{var r=e.params.id,s=await database_1.default.query("SELECT id, vehicle_name, rate_per_km, description FROM vehicle_types WHERE id = $1 AND is_active = true",[r]);if(0===s.rows.length)return a.status(404).json({error:"Vehicle type not found"});a.json({vehicleType:s.rows[0]})}catch(e){console.error("Error fetching vehicle type:",e),a.status(500).json({error:"Failed to fetch vehicle type"})}}),createTravelExpense=(exports.getVehicleTypeById=getVehicleTypeById,async(e,a)=>{try{var r,s,t,o,n,i,l,d,u,p,_,c,E,m,v,y,x,g,h,f,w=e.user?.id;return w?({vehicle_type_id:r,travel_date:s,distance_km:t,gps_km:o,rate_per_km:n,fuel_charges:i,parking_charges:l,other_expense:d,is_gps_based:u,is_manual_edit:p,remarks:_}=e.body,r&&s&&void 0!==t&&void 0!==n?t<0||n<0?a.status(400).json({error:"Distance and rate must be positive values"}):(c=parseFloat(i??0)||0,E=parseFloat(l??0)||0,m=parseFloat(d??0)||0,v=await getStandardDailyAllowanceByUserId(w),c<0||E<0||m<0||v<0?a.status(400).json({error:"Additional charges must be positive values"}):(y=parseFloat((t*n).toFixed(2)),x=parseFloat((y+c+E+m+v).toFixed(2)),(h=(g=await database_1.default.query("SELECT setting_value FROM settings WHERE setting_key = 'ta_max_daily_km'")).rows[0]?.setting_value?parseFloat(g.rows[0].setting_value):500)<t?a.status(400).json({error:`Distance exceeds daily limit of ${h} km`}):0<(await database_1.default.query("SELECT id FROM travel_expenses WHERE user_id = $1 AND travel_date = $2",[w,s])).rows.length?a.status(400).json({error:"Travel expense already exists for this date. Please update the existing record."}):(f=await database_1.default.query(`INSERT INTO travel_expenses 
+     WHERE u.id = $1`, [userId]);
+    if (result.rows.length === 0) {
+        return 0;
+    }
+    return parseFloat(result.rows[0].daily_allowance) || 0;
+};
+// Get all active vehicle types
+const getVehicleTypes = async (req, res) => {
+    try {
+        const result = await database_1.default.query('SELECT id, vehicle_name, rate_per_km, description FROM vehicle_types WHERE is_active = true ORDER BY id');
+        res.json({ vehicleTypes: result.rows });
+    }
+    catch (error) {
+        console.error('Error fetching vehicle types:', error);
+        res.status(500).json({ error: 'Failed to fetch vehicle types' });
+    }
+};
+exports.getVehicleTypes = getVehicleTypes;
+// Get vehicle type by ID
+const getVehicleTypeById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await database_1.default.query('SELECT id, vehicle_name, rate_per_km, description FROM vehicle_types WHERE id = $1 AND is_active = true', [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Vehicle type not found' });
+        }
+        res.json({ vehicleType: result.rows[0] });
+    }
+    catch (error) {
+        console.error('Error fetching vehicle type:', error);
+        res.status(500).json({ error: 'Failed to fetch vehicle type' });
+    }
+};
+exports.getVehicleTypeById = getVehicleTypeById;
+// Create travel expense claim
+const createTravelExpense = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const { vehicle_type_id, travel_date, distance_km, gps_km, rate_per_km, fuel_charges, parking_charges, other_expense, is_gps_based, is_manual_edit, remarks } = req.body;
+        // Validate required fields
+        if (!vehicle_type_id || !travel_date || distance_km === undefined || rate_per_km === undefined) {
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
+        // Validate positive values
+        if (distance_km < 0 || rate_per_km < 0) {
+            return res.status(400).json({ error: 'Distance and rate must be positive values' });
+        }
+        const fuelCharges = parseFloat(fuel_charges ?? 0) || 0;
+        const parkingCharges = parseFloat(parking_charges ?? 0) || 0;
+        const otherExpense = parseFloat(other_expense ?? 0) || 0;
+        const dailyAllowance = await getStandardDailyAllowanceByUserId(userId);
+        if (fuelCharges < 0 || parkingCharges < 0 || otherExpense < 0 || dailyAllowance < 0) {
+            return res.status(400).json({ error: 'Additional charges must be positive values' });
+        }
+        // Calculate total amount from base TA + additional charges
+        const baseAmount = parseFloat((distance_km * rate_per_km).toFixed(2));
+        const calculatedAmount = parseFloat((baseAmount + fuelCharges + parkingCharges + otherExpense + dailyAllowance).toFixed(2));
+        // Check daily KM limit
+        const settings = await database_1.default.query("SELECT setting_value FROM settings WHERE setting_key = 'ta_max_daily_km'");
+        const maxDailyKm = settings.rows[0]?.setting_value ? parseFloat(settings.rows[0].setting_value) : 500;
+        if (distance_km > maxDailyKm) {
+            return res.status(400).json({
+                error: `Distance exceeds daily limit of ${maxDailyKm} km`
+            });
+        }
+        // Check if expense already exists for this date
+        const existing = await database_1.default.query('SELECT id FROM travel_expenses WHERE user_id = $1 AND travel_date = $2', [userId, travel_date]);
+        if (existing.rows.length > 0) {
+            return res.status(400).json({
+                error: 'Travel expense already exists for this date. Please update the existing record.'
+            });
+        }
+        // Insert travel expense
+        const result = await database_1.default.query(`INSERT INTO travel_expenses 
         (user_id, vehicle_type_id, travel_date, distance_km, gps_km, rate_per_km, total_amount,
          fuel_charges, parking_charges, other_expense, daily_allowance,
          is_gps_based, is_manual_edit, remarks, status)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'pending')
-      RETURNING *`,[w,r,s,t,o,n,x,c,E,m,v,u,p,_]),void a.status(201).json({success:!0,expense:f.rows[0],message:"Travel expense created successfully"})))):a.status(400).json({error:"Missing required fields"})):a.status(401).json({error:"Unauthorized"})}catch(e){console.error("Error creating travel expense:",e),a.status(500).json({error:"Failed to create travel expense"})}}),updateTravelExpense=(exports.createTravelExpense=createTravelExpense,async(r,s)=>{try{var t=r.user?.id;if(!t)return s.status(401).json({error:"Unauthorized"});var o=r.params.id,{vehicle_type_id:n,distance_km:i,gps_km:l,rate_per_km:d,fuel_charges:u,parking_charges:p,other_expense:_,is_manual_edit:c,remarks:E,_resubmit:m}=r.body,v=await database_1.default.query("SELECT * FROM travel_expenses WHERE id = $1 AND user_id = $2",[o,t]);if(0===v.rows.length)return s.status(404).json({error:"Travel expense not found"});var y=v.rows[0].status;if("approved"===y)return s.status(400).json({error:"Cannot edit approved expenses"});if("rejected"===y)return s.status(400).json({error:"Cannot edit rejected expenses"});var x=void 0!==u?parseFloat(u)||0:parseFloat(v.rows[0].fuel_charges??0)||0,g=void 0!==p?parseFloat(p)||0:parseFloat(v.rows[0].parking_charges??0)||0,h=void 0!==_?parseFloat(_)||0:parseFloat(v.rows[0].other_expense??0)||0,f=await getStandardDailyAllowanceByUserId(t);if(x<0||g<0||h<0||f<0)return s.status(400).json({error:"Additional charges must be positive values"});var w=void 0!==i?i:v.rows[0].distance_km,T=void 0!==d?d:v.rows[0].rate_per_km;if(!Number.isFinite(Number(w))||!Number.isFinite(Number(T)))return s.status(400).json({error:"Distance and rate must be valid numbers"});if(Number(w)<0||Number(T)<0)return s.status(400).json({error:"Distance and rate must be positive values"});var N=parseFloat((w*T).toFixed(2)),A=parseFloat((N+x+g+h+f).toFixed(2));let e=y,a=v.rows[0].modification_reason;m&&"pending_modification"===y&&(e="pending",a=null);var R=await database_1.default.query(`UPDATE travel_expenses 
+      RETURNING *`, [
+            userId,
+            vehicle_type_id,
+            travel_date,
+            distance_km,
+            gps_km,
+            rate_per_km,
+            calculatedAmount,
+            fuelCharges,
+            parkingCharges,
+            otherExpense,
+            dailyAllowance,
+            is_gps_based,
+            is_manual_edit,
+            remarks
+        ]);
+        res.status(201).json({
+            success: true,
+            expense: result.rows[0],
+            message: 'Travel expense created successfully'
+        });
+    }
+    catch (error) {
+        console.error('Error creating travel expense:', error);
+        res.status(500).json({ error: 'Failed to create travel expense' });
+    }
+};
+exports.createTravelExpense = createTravelExpense;
+// Update travel expense
+const updateTravelExpense = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const { id } = req.params;
+        const { vehicle_type_id, distance_km, gps_km, rate_per_km, fuel_charges, parking_charges, other_expense, is_manual_edit, remarks, _resubmit } = req.body;
+        // Check if expense exists and belongs to user
+        const existing = await database_1.default.query('SELECT * FROM travel_expenses WHERE id = $1 AND user_id = $2', [id, userId]);
+        if (existing.rows.length === 0) {
+            return res.status(404).json({ error: 'Travel expense not found' });
+        }
+        // Check current status
+        const currentStatus = existing.rows[0].status;
+        // Check permissions based on status
+        if (currentStatus === 'approved') {
+            return res.status(400).json({ error: 'Cannot edit approved expenses' });
+        }
+        // If resubmitting from pending_modification, allow it
+        // If already pending and trying to edit, allow it
+        // If rejected, don't allow editing
+        if (currentStatus === 'rejected') {
+            return res.status(400).json({ error: 'Cannot edit rejected expenses' });
+        }
+        const nextFuelCharges = fuel_charges !== undefined ? (parseFloat(fuel_charges) || 0) : (parseFloat(existing.rows[0].fuel_charges ?? 0) || 0);
+        const nextParkingCharges = parking_charges !== undefined ? (parseFloat(parking_charges) || 0) : (parseFloat(existing.rows[0].parking_charges ?? 0) || 0);
+        const nextOtherExpense = other_expense !== undefined ? (parseFloat(other_expense) || 0) : (parseFloat(existing.rows[0].other_expense ?? 0) || 0);
+        const nextDailyAllowance = await getStandardDailyAllowanceByUserId(userId);
+        if (nextFuelCharges < 0 || nextParkingCharges < 0 || nextOtherExpense < 0 || nextDailyAllowance < 0) {
+            return res.status(400).json({ error: 'Additional charges must be positive values' });
+        }
+        // Calculate new total
+        const newDistance = distance_km !== undefined ? distance_km : existing.rows[0].distance_km;
+        const newRate = rate_per_km !== undefined ? rate_per_km : existing.rows[0].rate_per_km;
+        if (!Number.isFinite(Number(newDistance)) || !Number.isFinite(Number(newRate))) {
+            return res.status(400).json({ error: 'Distance and rate must be valid numbers' });
+        }
+        if (Number(newDistance) < 0 || Number(newRate) < 0) {
+            return res.status(400).json({ error: 'Distance and rate must be positive values' });
+        }
+        const newBaseAmount = parseFloat((newDistance * newRate).toFixed(2));
+        const calculatedAmount = parseFloat((newBaseAmount + nextFuelCharges + nextParkingCharges + nextOtherExpense + nextDailyAllowance).toFixed(2));
+        // Determine new status
+        let newStatus = currentStatus; // Keep current status by default
+        let modificationReason = existing.rows[0].modification_reason; // Keep existing modification reason
+        // If resubmitting from pending_modification, change status back to pending
+        if (_resubmit && currentStatus === 'pending_modification') {
+            newStatus = 'pending';
+            // Clear modification fields when resubmitting
+            modificationReason = null;
+        }
+        // Update expense
+        const result = await database_1.default.query(`UPDATE travel_expenses 
       SET vehicle_type_id = COALESCE($1, vehicle_type_id),
           distance_km = COALESCE($2, distance_km),
           gps_km = COALESCE($3, gps_km),
@@ -22,23 +193,134 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
           modification_reason = $14,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $12 AND user_id = $15
-      RETURNING *`,[n,i,l,d,A,u,p,_,f,c,E,o,e,a,t]);s.json({success:!0,expense:R.rows[0],message:m&&"pending_modification"===y?"Travel expense resubmitted for approval":"Travel expense updated successfully"})}catch(e){console.error("Error updating travel expense:",e),s.status(500).json({error:"Failed to update travel expense"})}}),getDailyAllowanceForCurrentUser=(exports.updateTravelExpense=updateTravelExpense,async(e,a)=>{try{var r,s,t=e.user?.id;return t?0===(r=await database_1.default.query(`SELECT
+      RETURNING *`, [
+            vehicle_type_id,
+            distance_km,
+            gps_km,
+            rate_per_km,
+            calculatedAmount,
+            fuel_charges,
+            parking_charges,
+            other_expense,
+            nextDailyAllowance,
+            is_manual_edit,
+            remarks,
+            id,
+            newStatus,
+            modificationReason,
+            userId
+        ]);
+        res.json({
+            success: true,
+            expense: result.rows[0],
+            message: _resubmit && currentStatus === 'pending_modification'
+                ? 'Travel expense resubmitted for approval'
+                : 'Travel expense updated successfully'
+        });
+    }
+    catch (error) {
+        console.error('Error updating travel expense:', error);
+        res.status(500).json({ error: 'Failed to update travel expense' });
+    }
+};
+exports.updateTravelExpense = updateTravelExpense;
+// Get standard daily allowance for current user based on role
+const getDailyAllowanceForCurrentUser = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const result = await database_1.default.query(`SELECT
           r.id AS role_id,
           r.name AS role_name,
           COALESCE(trda.allowance_amount, 0) AS daily_allowance
        FROM users u
        JOIN roles r ON r.id = u.role_id
        LEFT JOIN ta_role_daily_allowance trda ON trda.role_id = r.id
-       WHERE u.id = $1`,[t])).rows.length?a.status(404).json({error:"User not found"}):(s=r.rows[0],void a.json({role_id:s.role_id,role_name:s.role_name,daily_allowance:parseFloat(s.daily_allowance)||0})):a.status(401).json({error:"Unauthorized"})}catch(e){console.error("Error fetching daily allowance:",e),a.status(500).json({error:"Failed to fetch daily allowance"})}}),getRoleDailyAllowances=(exports.getDailyAllowanceForCurrentUser=getDailyAllowanceForCurrentUser,async(e,a)=>{try{var r=await database_1.default.query(`SELECT
+       WHERE u.id = $1`, [userId]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        const row = result.rows[0];
+        res.json({
+            role_id: row.role_id,
+            role_name: row.role_name,
+            daily_allowance: parseFloat(row.daily_allowance) || 0,
+        });
+    }
+    catch (error) {
+        console.error('Error fetching daily allowance:', error);
+        res.status(500).json({ error: 'Failed to fetch daily allowance' });
+    }
+};
+exports.getDailyAllowanceForCurrentUser = getDailyAllowanceForCurrentUser;
+// Get role-wise daily allowance master data
+const getRoleDailyAllowances = async (req, res) => {
+    try {
+        const result = await database_1.default.query(`SELECT
           r.id AS role_id,
           r.name AS role_name,
           COALESCE(trda.allowance_amount, 0) AS allowance_amount
        FROM roles r
        LEFT JOIN ta_role_daily_allowance trda ON trda.role_id = r.id
-       ORDER BY r.name ASC`);a.json({allowances:r.rows.map(e=>({role_id:e.role_id,role_name:e.role_name,allowance_amount:parseFloat(e.allowance_amount)||0}))})}catch(e){console.error("Error fetching role daily allowances:",e),a.status(500).json({error:"Failed to fetch role daily allowances"})}}),updateRoleDailyAllowance=(exports.getRoleDailyAllowances=getRoleDailyAllowances,async(e,a)=>{try{var r,s,t=e.params.roleId,o=e.body.allowance_amount,n=parseInt(t,10);return Number.isNaN(n)?a.status(400).json({error:"Invalid role ID"}):(r=parseFloat(o),Number.isNaN(r)||r<0?a.status(400).json({error:"allowance_amount must be a non-negative number"}):0===(s=await database_1.default.query("SELECT id, name FROM roles WHERE id = $1",[n])).rows.length?a.status(404).json({error:"Role not found"}):(await database_1.default.query(`INSERT INTO ta_role_daily_allowance (role_id, allowance_amount)
+       ORDER BY r.name ASC`);
+        res.json({ allowances: result.rows.map((row) => ({
+                role_id: row.role_id,
+                role_name: row.role_name,
+                allowance_amount: parseFloat(row.allowance_amount) || 0,
+            })) });
+    }
+    catch (error) {
+        console.error('Error fetching role daily allowances:', error);
+        res.status(500).json({ error: 'Failed to fetch role daily allowances' });
+    }
+};
+exports.getRoleDailyAllowances = getRoleDailyAllowances;
+// Update role-wise daily allowance (admin only)
+const updateRoleDailyAllowance = async (req, res) => {
+    try {
+        const { roleId } = req.params;
+        const { allowance_amount } = req.body;
+        const parsedRoleId = parseInt(roleId, 10);
+        if (Number.isNaN(parsedRoleId)) {
+            return res.status(400).json({ error: 'Invalid role ID' });
+        }
+        const allowanceAmount = parseFloat(allowance_amount);
+        if (Number.isNaN(allowanceAmount) || allowanceAmount < 0) {
+            return res.status(400).json({ error: 'allowance_amount must be a non-negative number' });
+        }
+        const roleExists = await database_1.default.query('SELECT id, name FROM roles WHERE id = $1', [parsedRoleId]);
+        if (roleExists.rows.length === 0) {
+            return res.status(404).json({ error: 'Role not found' });
+        }
+        await database_1.default.query(`INSERT INTO ta_role_daily_allowance (role_id, allowance_amount)
        VALUES ($1, $2)
        ON CONFLICT (role_id)
-       DO UPDATE SET allowance_amount = EXCLUDED.allowance_amount, updated_at = CURRENT_TIMESTAMP`,[n,r]),void a.json({success:!0,role_id:n,role_name:s.rows[0].name,allowance_amount:r,message:"Role daily allowance updated successfully"})))}catch(e){console.error("Error updating role daily allowance:",e),a.status(500).json({error:"Failed to update role daily allowance"})}}),getTravelExpenses=(exports.updateRoleDailyAllowance=updateRoleDailyAllowance,async(a,r)=>{try{var s=a.user?.id;if(!s)return r.status(401).json({error:"Unauthorized"});var{start_date:t,end_date:o,status:n}=a.query;let e=`
+       DO UPDATE SET allowance_amount = EXCLUDED.allowance_amount, updated_at = CURRENT_TIMESTAMP`, [parsedRoleId, allowanceAmount]);
+        res.json({
+            success: true,
+            role_id: parsedRoleId,
+            role_name: roleExists.rows[0].name,
+            allowance_amount: allowanceAmount,
+            message: 'Role daily allowance updated successfully',
+        });
+    }
+    catch (error) {
+        console.error('Error updating role daily allowance:', error);
+        res.status(500).json({ error: 'Failed to update role daily allowance' });
+    }
+};
+exports.updateRoleDailyAllowance = updateRoleDailyAllowance;
+// Get user's travel expenses
+const getTravelExpenses = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const { start_date, end_date, status } = req.query;
+        let query = `
       SELECT te.*, vt.vehicle_name, vt.description as vehicle_description,
              u.name as user_name, u.email as user_email,
              mu.name as modification_requested_by_name
@@ -47,14 +329,95 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
       JOIN users u ON te.user_id = u.id
       LEFT JOIN users mu ON te.modification_requested_by = mu.id
       WHERE te.user_id = $1
-    `;var i=[s],l=(t&&(i.push(t),e+=" AND te.travel_date >= $"+i.length),o&&(i.push(o),e+=" AND te.travel_date <= $"+i.length),n&&(i.push(n),e+=" AND te.status = $"+i.length),e+=" ORDER BY te.travel_date DESC, te.created_at DESC",await database_1.default.query(e,i));r.json({expenses:l.rows})}catch(e){console.error("Error fetching travel expenses:",e),r.status(500).json({error:"Failed to fetch travel expenses"})}}),getTravelExpenseById=(exports.getTravelExpenses=getTravelExpenses,async(e,a)=>{try{var r,s,t=e.user?.id;return t?(r=e.params.id,0===(s=await database_1.default.query(`SELECT te.*, vt.vehicle_name, vt.description as vehicle_description,
+    `;
+        const params = [userId];
+        if (start_date) {
+            params.push(start_date);
+            query += ` AND te.travel_date >= $${params.length}`;
+        }
+        if (end_date) {
+            params.push(end_date);
+            query += ` AND te.travel_date <= $${params.length}`;
+        }
+        if (status) {
+            params.push(status);
+            query += ` AND te.status = $${params.length}`;
+        }
+        query += ' ORDER BY te.travel_date DESC, te.created_at DESC';
+        const result = await database_1.default.query(query, params);
+        res.json({ expenses: result.rows });
+    }
+    catch (error) {
+        console.error('Error fetching travel expenses:', error);
+        res.status(500).json({ error: 'Failed to fetch travel expenses' });
+    }
+};
+exports.getTravelExpenses = getTravelExpenses;
+// Get travel expense by ID
+const getTravelExpenseById = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const { id } = req.params;
+        const result = await database_1.default.query(`SELECT te.*, vt.vehicle_name, vt.description as vehicle_description,
               u.name as user_name, u.email as user_email,
               mu.name as modification_requested_by_name
        FROM travel_expenses te
        JOIN vehicle_types vt ON te.vehicle_type_id = vt.id
        JOIN users u ON te.user_id = u.id
        LEFT JOIN users mu ON te.modification_requested_by = mu.id
-       WHERE te.id = $1 AND te.user_id = $2`,[r,t])).rows.length?a.status(404).json({error:"Travel expense not found"}):void a.json({expense:s.rows[0]})):a.status(401).json({error:"Unauthorized"})}catch(e){console.error("Error fetching travel expense:",e),a.status(500).json({error:"Failed to fetch travel expense"})}}),deleteTravelExpense=(exports.getTravelExpenseById=getTravelExpenseById,async(e,a)=>{try{var r,s,t=e.user?.id;return t?(r=e.params.id,0===(s=await database_1.default.query("SELECT status FROM travel_expenses WHERE id = $1 AND user_id = $2",[r,t])).rows.length?a.status(404).json({error:"Travel expense not found"}):"approved"===s.rows[0].status?a.status(400).json({error:"Cannot delete approved expenses"}):(await database_1.default.query("DELETE FROM travel_expenses WHERE id = $1 AND user_id = $2",[r,t]),void a.json({success:!0,message:"Travel expense deleted successfully"}))):a.status(401).json({error:"Unauthorized"})}catch(e){console.error("Error deleting travel expense:",e),a.status(500).json({error:"Failed to delete travel expense"})}}),getExpenseSummary=(exports.deleteTravelExpense=deleteTravelExpense,async(a,r)=>{try{var s=a.user?.id;if(!s)return r.status(401).json({error:"Unauthorized"});var{start_date:t,end_date:o}=a.query;let e=`
+       WHERE te.id = $1 AND te.user_id = $2`, [id, userId]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Travel expense not found' });
+        }
+        res.json({ expense: result.rows[0] });
+    }
+    catch (error) {
+        console.error('Error fetching travel expense:', error);
+        res.status(500).json({ error: 'Failed to fetch travel expense' });
+    }
+};
+exports.getTravelExpenseById = getTravelExpenseById;
+// Delete travel expense
+const deleteTravelExpense = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const { id } = req.params;
+        // Check if expense exists and belongs to user
+        const existing = await database_1.default.query('SELECT status FROM travel_expenses WHERE id = $1 AND user_id = $2', [id, userId]);
+        if (existing.rows.length === 0) {
+            return res.status(404).json({ error: 'Travel expense not found' });
+        }
+        // Don't allow deleting approved expenses
+        if (existing.rows[0].status === 'approved') {
+            return res.status(400).json({ error: 'Cannot delete approved expenses' });
+        }
+        await database_1.default.query('DELETE FROM travel_expenses WHERE id = $1 AND user_id = $2', [id, userId]);
+        res.json({
+            success: true,
+            message: 'Travel expense deleted successfully'
+        });
+    }
+    catch (error) {
+        console.error('Error deleting travel expense:', error);
+        res.status(500).json({ error: 'Failed to delete travel expense' });
+    }
+};
+exports.deleteTravelExpense = deleteTravelExpense;
+// Get expense summary
+const getExpenseSummary = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const { start_date, end_date } = req.query;
+        let query = `
       SELECT 
         COUNT(*) as total_claims,
         SUM(distance_km) as total_km,
@@ -64,7 +427,38 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
         SUM(CASE WHEN status = 'approved' THEN total_amount ELSE 0 END) as approved_amount
       FROM travel_expenses
       WHERE user_id = $1
-    `;var n=[s],i=(t&&(n.push(t),e+=" AND travel_date >= $"+n.length),o&&(n.push(o),e+=" AND travel_date <= $"+n.length),await database_1.default.query(e,n));r.json({summary:i.rows[0]})}catch(e){console.error("Error fetching expense summary:",e),r.status(500).json({error:"Failed to fetch expense summary"})}}),getPendingExpensesByUser=(exports.getExpenseSummary=getExpenseSummary,async(e,a)=>{try{var r,s,t=e.user?.id;return t?0===(r=await(0,roleAccess_1.getAccessibleUserIds)(t)).length?a.json({users:[]}):(s=await database_1.default.query(`SELECT 
+    `;
+        const params = [userId];
+        if (start_date) {
+            params.push(start_date);
+            query += ` AND travel_date >= $${params.length}`;
+        }
+        if (end_date) {
+            params.push(end_date);
+            query += ` AND travel_date <= $${params.length}`;
+        }
+        const result = await database_1.default.query(query, params);
+        res.json({ summary: result.rows[0] });
+    }
+    catch (error) {
+        console.error('Error fetching expense summary:', error);
+        res.status(500).json({ error: 'Failed to fetch expense summary' });
+    }
+};
+exports.getExpenseSummary = getExpenseSummary;
+// Get pending expenses grouped by user (for approvers)
+const getPendingExpensesByUser = async (req, res) => {
+    try {
+        const approverId = req.user?.id;
+        if (!approverId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const accessibleUserIds = await (0, roleAccess_1.getAccessibleUserIds)(approverId);
+        if (accessibleUserIds.length === 0) {
+            return res.json({ users: [] });
+        }
+        // Get all users with pending expenses (including pending_modification)
+        const result = await database_1.default.query(`SELECT 
         u.id as user_id,
         u.name as user_name,
         u.email as user_email,
@@ -77,7 +471,33 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
       WHERE te.status IN ('pending', 'pending_modification')
         AND te.user_id = ANY($1)
       GROUP BY u.id, u.name, u.email
-      ORDER BY total_amount DESC, user_name ASC`,[r]),void a.json({users:s.rows})):a.status(401).json({error:"Unauthorized"})}catch(e){console.error("Error fetching pending expenses by user:",e),a.status(500).json({error:"Failed to fetch pending expenses"})}}),getUserExpenses=(exports.getPendingExpensesByUser=getPendingExpensesByUser,async(a,r)=>{try{var s=a.user?.id;if(!s)return r.status(401).json({error:"Unauthorized"});var t=a.params.userId,o=a.query.status,n=parseInt(t);if(Number.isNaN(n))return r.status(400).json({error:"Invalid user ID"});if(!(await(0,roleAccess_1.getAccessibleUserIds)(s)).includes(n))return r.status(403).json({error:"Forbidden"});let e=`
+      ORDER BY total_amount DESC, user_name ASC`, [accessibleUserIds]);
+        res.json({ users: result.rows });
+    }
+    catch (error) {
+        console.error('Error fetching pending expenses by user:', error);
+        res.status(500).json({ error: 'Failed to fetch pending expenses' });
+    }
+};
+exports.getPendingExpensesByUser = getPendingExpensesByUser;
+// Get all expenses for a specific user (for approvers)
+const getUserExpenses = async (req, res) => {
+    try {
+        const approverId = req.user?.id;
+        if (!approverId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const { userId } = req.params;
+        const { status } = req.query;
+        const targetUserId = parseInt(userId);
+        if (Number.isNaN(targetUserId)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+        const accessibleUserIds = await (0, roleAccess_1.getAccessibleUserIds)(approverId);
+        if (!accessibleUserIds.includes(targetUserId)) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+        let query = `
       SELECT te.*, vt.vehicle_name, vt.description as vehicle_description,
              u.name as user_name, u.email as user_email,
              mu.name as modification_requested_by_name
@@ -86,14 +506,87 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
       JOIN users u ON te.user_id = u.id
       LEFT JOIN users mu ON te.modification_requested_by = mu.id
       WHERE te.user_id = $1
-    `;var i=[n],l=(o&&(i.push(o),e+=" AND te.status = $"+i.length),e+=" ORDER BY te.travel_date DESC, te.created_at DESC",await database_1.default.query(e,i));r.json({expenses:l.rows})}catch(e){console.error("Error fetching user expenses:",e),r.status(500).json({error:"Failed to fetch user expenses"})}}),approveExpenses=(exports.getUserExpenses=getUserExpenses,async(s,t)=>{try{var o=s.user?.id;if(!o)return t.status(401).json({error:"Unauthorized"});var{expense_ids:n,action:i,reason:l}=s.body;if(!n||!Array.isArray(n)||0===n.length)return t.status(400).json({error:"expense_ids array is required"});if(!["approve","reject","modify"].includes(i))return t.status(400).json({error:'Invalid action. Must be "approve", "reject", or "modify"'});if("modify"===i&&(!l||""===l.trim()))return t.status(400).json({error:"Reason is required for modify action"});let e,a=(e="approve"===i?"approved":"reject"===i?"rejected":"pending_modification",`
+    `;
+        const params = [targetUserId];
+        if (status) {
+            params.push(status);
+            query += ` AND te.status = $${params.length}`;
+        }
+        query += ' ORDER BY te.travel_date DESC, te.created_at DESC';
+        const result = await database_1.default.query(query, params);
+        res.json({ expenses: result.rows });
+    }
+    catch (error) {
+        console.error('Error fetching user expenses:', error);
+        res.status(500).json({ error: 'Failed to fetch user expenses' });
+    }
+};
+exports.getUserExpenses = getUserExpenses;
+// Approve or reject expenses (bulk operation)
+const approveExpenses = async (req, res) => {
+    try {
+        const approverId = req.user?.id;
+        if (!approverId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const { expense_ids, action, reason } = req.body; // action: 'approve', 'reject', or 'modify'
+        if (!expense_ids || !Array.isArray(expense_ids) || expense_ids.length === 0) {
+            return res.status(400).json({ error: 'expense_ids array is required' });
+        }
+        if (!['approve', 'reject', 'modify'].includes(action)) {
+            return res.status(400).json({ error: 'Invalid action. Must be "approve", "reject", or "modify"' });
+        }
+        // Validate reason is provided for modify action
+        if (action === 'modify' && (!reason || reason.trim() === '')) {
+            return res.status(400).json({ error: 'Reason is required for modify action' });
+        }
+        let newStatus;
+        if (action === 'approve') {
+            newStatus = 'approved';
+        }
+        else if (action === 'reject') {
+            newStatus = 'rejected';
+        }
+        else {
+            newStatus = 'pending_modification';
+        }
+        // Build query based on action
+        let query = `
       UPDATE travel_expenses 
       SET status = $1,
           approved_by = $2,
           approved_at = CURRENT_TIMESTAMP,
-          updated_at = CURRENT_TIMESTAMP`),r=[e,o,n];"modify"===i&&(a+=`,
+          updated_at = CURRENT_TIMESTAMP`;
+        let params = [newStatus, approverId, expense_ids];
+        if (action === 'modify') {
+            query += `,
           modification_reason = $4,
           modification_requested_by = $2,
-          modification_requested_at = CURRENT_TIMESTAMP`,r=[e,o,n,l.trim()]),a+=`
+          modification_requested_at = CURRENT_TIMESTAMP`;
+            params = [newStatus, approverId, expense_ids, reason.trim()];
+        }
+        query += `
       WHERE id = ANY($3::int[]) AND status = 'pending'
-      RETURNING id, user_id, total_amount, status`;var d=await database_1.default.query(a,r),u=d.rows.length;if(0===u)return t.status(404).json({error:"No pending expenses found with the provided IDs"});t.json({success:!0,message:"modify"===i?`Successfully sent ${u} expense(s) back for modification`:`Successfully ${i}d ${u} expense(s)`,updated_expenses:d.rows})}catch(e){console.error("Error approving expenses:",e),t.status(500).json({error:"Failed to approve expenses"})}});exports.approveExpenses=approveExpenses;
+      RETURNING id, user_id, total_amount, status`;
+        // Update expenses
+        const result = await database_1.default.query(query, params);
+        const updatedCount = result.rows.length;
+        if (updatedCount === 0) {
+            return res.status(404).json({
+                error: 'No pending expenses found with the provided IDs'
+            });
+        }
+        res.json({
+            success: true,
+            message: action === 'modify'
+                ? `Successfully sent ${updatedCount} expense(s) back for modification`
+                : `Successfully ${action}d ${updatedCount} expense(s)`,
+            updated_expenses: result.rows
+        });
+    }
+    catch (error) {
+        console.error('Error approving expenses:', error);
+        res.status(500).json({ error: 'Failed to approve expenses' });
+    }
+};
+exports.approveExpenses = approveExpenses;

@@ -1,1 +1,11 @@
-Object.defineProperty(exports,"__esModule",{value:!0});let express_1=require("express"),dealerPlanningController_1=require("../controllers/dealerPlanningController"),auth_1=require("../middleware/auth"),router=(0,express_1.Router)();router.get("/",auth_1.authenticateToken,dealerPlanningController_1.getDealerPlans),router.post("/",auth_1.authenticateToken,dealerPlanningController_1.createDealerPlan),router.put("/:id",auth_1.authenticateToken,dealerPlanningController_1.updateDealerPlan),router.delete("/:id",auth_1.authenticateToken,dealerPlanningController_1.deleteDealerPlan),exports.default=router;
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const dealerPlanningController_1 = require("../controllers/dealerPlanningController");
+const auth_1 = require("../middleware/auth");
+const router = (0, express_1.Router)();
+router.get('/', auth_1.authenticateToken, dealerPlanningController_1.getDealerPlans);
+router.post('/', auth_1.authenticateToken, dealerPlanningController_1.createDealerPlan);
+router.put('/:id', auth_1.authenticateToken, dealerPlanningController_1.updateDealerPlan);
+router.delete('/:id', auth_1.authenticateToken, dealerPlanningController_1.deleteDealerPlan);
+exports.default = router;

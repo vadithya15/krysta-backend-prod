@@ -1,11 +1,81 @@
-var __importDefault=this&&this.__importDefault||function(t){return t&&t.__esModule?t:{default:t}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.updateTrackingSettings=exports.getTrackingSettings=exports.getAllUsersLocations=exports.getLocationHistory=exports.saveLocation=void 0;let database_1=__importDefault(require("../config/database")),saveLocation=async(t,e)=>{try{var a=t.user.id,{latitude:s,longitude:r,accuracy:o,timestamp:i}=t.body;if(!s||!r)return e.status(400).json({error:"Latitude and longitude are required"});var n=i?new Date(i):new Date,c=await database_1.default.query(`
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.updateTrackingSettings = exports.getTrackingSettings = exports.getAllUsersLocations = exports.getLocationHistory = exports.saveLocation = void 0;
+const database_1 = __importDefault(require("../config/database"));
+// Save location tracking data
+const saveLocation = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { latitude, longitude, accuracy, timestamp } = req.body;
+        if (!latitude || !longitude) {
+            return res.status(400).json({ error: 'Latitude and longitude are required' });
+        }
+        const query = `
       INSERT INTO location_tracks (user_id, latitude, longitude, accuracy, recorded_at)
       VALUES ($1, $2, $3, $4, $5)
       RETURNING *
-    `,[a,s,r,o||null,n]);e.json({message:"Location saved successfully",location:c.rows[0]})}catch(t){console.error("Save location error:",t),e.status(500).json({error:"Failed to save location",message:t.message})}},getLocationHistory=(exports.saveLocation=saveLocation,async(a,s)=>{try{var r=a.user.id,{startDate:o,endDate:i,limit:n=100,offset:c=0}=a.query;let t=`
+    `;
+        const recordedAt = timestamp ? new Date(timestamp) : new Date();
+        const result = await database_1.default.query(query, [
+            userId,
+            latitude,
+            longitude,
+            accuracy || null,
+            recordedAt
+        ]);
+        res.json({
+            message: 'Location saved successfully',
+            location: result.rows[0]
+        });
+    }
+    catch (error) {
+        console.error('Save location error:', error);
+        res.status(500).json({ error: 'Failed to save location', message: error.message });
+    }
+};
+exports.saveLocation = saveLocation;
+// Get location history for a user
+const getLocationHistory = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { startDate, endDate, limit = 100, offset = 0 } = req.query;
+        let query = `
       SELECT * FROM location_tracks 
       WHERE user_id = $1
-    `;var l=[r];let e=2;o&&(t+=" AND recorded_at >= $"+e,l.push(o),e++),i&&(t+=" AND recorded_at <= $"+e,l.push(i),e++),t+=` ORDER BY recorded_at DESC LIMIT $${e} OFFSET $`+(e+1),l.push(n,c);var u=await database_1.default.query(t,l);s.json({locations:u.rows,total:u.rowCount})}catch(t){console.error("Get location history error:",t),s.status(500).json({error:"Failed to get location history",message:t.message})}}),getAllUsersLocations=(exports.getLocationHistory=getLocationHistory,async(t,e)=>{try{var a=await database_1.default.query(`
+    `;
+        const params = [userId];
+        let paramIndex = 2;
+        if (startDate) {
+            query += ` AND recorded_at >= $${paramIndex}`;
+            params.push(startDate);
+            paramIndex++;
+        }
+        if (endDate) {
+            query += ` AND recorded_at <= $${paramIndex}`;
+            params.push(endDate);
+            paramIndex++;
+        }
+        query += ` ORDER BY recorded_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        params.push(limit, offset);
+        const result = await database_1.default.query(query, params);
+        res.json({
+            locations: result.rows,
+            total: result.rowCount
+        });
+    }
+    catch (error) {
+        console.error('Get location history error:', error);
+        res.status(500).json({ error: 'Failed to get location history', message: error.message });
+    }
+};
+exports.getLocationHistory = getLocationHistory;
+// Get all users' latest locations (for map view)
+const getAllUsersLocations = async (req, res) => {
+    try {
+        const query = `
       SELECT DISTINCT ON (lt.user_id)
         lt.user_id,
         lt.latitude,
@@ -23,14 +93,76 @@ var __importDefault=this&&this.__importDefault||function(t){return t&&t.__esModu
       LEFT JOIN checkpoints c ON u.id = c.user_id AND c.status = 'active'
       WHERE u.is_active = true
       ORDER BY lt.user_id, lt.recorded_at DESC
-    `);e.json({locations:a.rows,total:a.rowCount})}catch(t){console.error("Get all users locations error:",t),e.status(500).json({error:"Failed to get users locations",message:t.message})}}),getTrackingSettings=(exports.getAllUsersLocations=getAllUsersLocations,async(t,a)=>{try{var s=await database_1.default.query(`
+    `;
+        const result = await database_1.default.query(query);
+        res.json({
+            locations: result.rows,
+            total: result.rowCount
+        });
+    }
+    catch (error) {
+        console.error('Get all users locations error:', error);
+        res.status(500).json({ error: 'Failed to get users locations', message: error.message });
+    }
+};
+exports.getAllUsersLocations = getAllUsersLocations;
+// Get tracking settings
+const getTrackingSettings = async (req, res) => {
+    try {
+        const query = `
       SELECT setting_key, setting_value, description 
       FROM settings 
       WHERE setting_key = 'location_tracking_interval'
-    `);if(0===s.rows.length)return a.json({location_tracking_interval:6e5});let e={};s.rows.forEach(t=>{e[t.setting_key]=parseInt(t.setting_value)}),a.json(e)}catch(t){console.error("Get tracking settings error:",t),a.status(500).json({error:"Failed to get tracking settings",message:t.message})}}),updateTrackingSettings=(exports.getTrackingSettings=getTrackingSettings,async(t,e)=>{try{var a=t.body.location_tracking_interval;if(!a||a<6e4)return e.status(400).json({error:"Invalid interval",message:"Tracking interval must be at least 60000ms (1 minute)"});var s=await database_1.default.query(`
+    `;
+        const result = await database_1.default.query(query);
+        if (result.rows.length === 0) {
+            // Return default value if not set
+            return res.json({
+                location_tracking_interval: 600000 // 10 minutes in milliseconds
+            });
+        }
+        const settings = {};
+        result.rows.forEach(row => {
+            settings[row.setting_key] = parseInt(row.setting_value);
+        });
+        res.json(settings);
+    }
+    catch (error) {
+        console.error('Get tracking settings error:', error);
+        res.status(500).json({ error: 'Failed to get tracking settings', message: error.message });
+    }
+};
+exports.getTrackingSettings = getTrackingSettings;
+// Update tracking settings (admin only)
+const updateTrackingSettings = async (req, res) => {
+    try {
+        const { location_tracking_interval } = req.body;
+        if (!location_tracking_interval || location_tracking_interval < 60000) {
+            return res.status(400).json({
+                error: 'Invalid interval',
+                message: 'Tracking interval must be at least 60000ms (1 minute)'
+            });
+        }
+        const query = `
       INSERT INTO settings (setting_key, setting_value, description)
       VALUES ($1, $2, $3)
       ON CONFLICT (setting_key) 
       DO UPDATE SET setting_value = $2, updated_at = NOW()
       RETURNING *
-    `,["location_tracking_interval",a.toString(),"GPS tracking interval in milliseconds"]);e.json({message:"Tracking settings updated successfully",setting:s.rows[0]})}catch(t){console.error("Update tracking settings error:",t),e.status(500).json({error:"Failed to update tracking settings",message:t.message})}});exports.updateTrackingSettings=updateTrackingSettings;
+    `;
+        const result = await database_1.default.query(query, [
+            'location_tracking_interval',
+            location_tracking_interval.toString(),
+            'GPS tracking interval in milliseconds'
+        ]);
+        res.json({
+            message: 'Tracking settings updated successfully',
+            setting: result.rows[0]
+        });
+    }
+    catch (error) {
+        console.error('Update tracking settings error:', error);
+        res.status(500).json({ error: 'Failed to update tracking settings', message: error.message });
+    }
+};
+exports.updateTrackingSettings = updateTrackingSettings;

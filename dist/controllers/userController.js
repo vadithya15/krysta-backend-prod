@@ -1,10 +1,89 @@
-var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.getMyReporteesCount=exports.getAllRoles=exports.getUserRegions=exports.deleteUser=exports.updateUser=exports.createUser=exports.getUserById=exports.getAllUsers=void 0;let bcryptjs_1=__importDefault(require("bcryptjs")),database_1=__importDefault(require("../config/database")),role_access_1=require("../middleware/role-access"),hasTableColumn=async(e,r)=>0<(await database_1.default.query(`SELECT 1
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getMyReporteesCount = exports.getAllRoles = exports.getUserRegions = exports.deleteUser = exports.updateUser = exports.createUser = exports.getUserById = exports.getAllUsers = void 0;
+const bcryptjs_1 = __importDefault(require("bcryptjs"));
+const database_1 = __importDefault(require("../config/database"));
+const role_access_1 = require("../middleware/role-access");
+const hasTableColumn = async (tableName, columnName) => {
+    const result = await database_1.default.query(`SELECT 1
      FROM information_schema.columns
      WHERE table_name = $1 AND column_name = $2
-     LIMIT 1`,[e,r])).rows.length,findRoleByName=async(e,r)=>await hasTableColumn("roles","organization_id")?database_1.default.query("SELECT id, name FROM roles WHERE LOWER(name) = LOWER($1) AND organization_id = $2",[e,r]):database_1.default.query("SELECT id, name FROM roles WHERE LOWER(name) = LOWER($1)",[e]),getAllUsers=async(r,a)=>{try{var s=r.organization?.id;if(!s)return a.status(400).json({error:"Organization context required"});var t=parseInt(r.query.page)||1,i=parseInt(r.query.limit)||10,o=(t-1)*i,n=r.query.search,u=r.query.role,d=r.query.is_active,l=["u.organization_id = $1"],_=[s];let e=2;var g=r.user?.id;if(g){var c=await(0,role_access_1.getAccessibleUserIds)(g);if(0===c.length)return a.json({data:[],pagination:{total:0,page:t,limit:i,pages:0}});l.push(`u.id = ANY($${e})`),_.push(c),e++}n&&(l.push(`(u.name ILIKE $${e} OR u.email ILIKE $${e})`),_.push(`%${n}%`),e++),u&&(l.push("r.name = $"+e),_.push(u),e++),void 0!==d&&(l.push("u.is_active = $"+e),_.push("true"===d),e++);var E=l.join(" AND "),m=await database_1.default.query(`SELECT COUNT(*) as count 
+     LIMIT 1`, [tableName, columnName]);
+    return result.rows.length > 0;
+};
+const findRoleByName = async (roleName, organizationId) => {
+    const hasRoleOrgColumn = await hasTableColumn('roles', 'organization_id');
+    if (hasRoleOrgColumn) {
+        return database_1.default.query('SELECT id, name FROM roles WHERE LOWER(name) = LOWER($1) AND organization_id = $2', [roleName, organizationId]);
+    }
+    return database_1.default.query('SELECT id, name FROM roles WHERE LOWER(name) = LOWER($1)', [roleName]);
+};
+/**
+ * Get all users with pagination and filters
+ */
+const getAllUsers = async (req, res) => {
+    try {
+        const organizationId = req.organization?.id;
+        if (!organizationId) {
+            return res.status(400).json({ error: 'Organization context required' });
+        }
+        // Pagination parameters
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+        // Filter parameters
+        const search = req.query.search;
+        const role = req.query.role;
+        const is_active = req.query.is_active;
+        // Build WHERE conditions
+        let whereConditions = ['u.organization_id = $1'];
+        let queryParams = [organizationId];
+        let paramIndex = 2;
+        const requesterId = req.user?.id;
+        if (requesterId) {
+            const accessibleUserIds = await (0, role_access_1.getAccessibleUserIds)(requesterId);
+            if (accessibleUserIds.length === 0) {
+                return res.json({
+                    data: [],
+                    pagination: {
+                        total: 0,
+                        page,
+                        limit,
+                        pages: 0,
+                    },
+                });
+            }
+            whereConditions.push(`u.id = ANY($${paramIndex})`);
+            queryParams.push(accessibleUserIds);
+            paramIndex++;
+        }
+        if (search) {
+            whereConditions.push(`(u.name ILIKE $${paramIndex} OR u.email ILIKE $${paramIndex})`);
+            queryParams.push(`%${search}%`);
+            paramIndex++;
+        }
+        if (role) {
+            whereConditions.push(`r.name = $${paramIndex}`);
+            queryParams.push(role);
+            paramIndex++;
+        }
+        if (is_active !== undefined) {
+            whereConditions.push(`u.is_active = $${paramIndex}`);
+            queryParams.push(is_active === 'true');
+            paramIndex++;
+        }
+        const whereClause = whereConditions.join(' AND ');
+        // Get total count
+        const countResult = await database_1.default.query(`SELECT COUNT(*) as count 
        FROM users u
        LEFT JOIN roles r ON u.role_id = r.id
-       WHERE `+E,_),p=parseInt(m.rows[0].count),h=(await database_1.default.query(`SELECT 
+       WHERE ${whereClause}`, queryParams);
+        const total = parseInt(countResult.rows[0].count);
+        // Get paginated users
+        const result = await database_1.default.query(`SELECT 
         u.id,
         u.name,
         u.email,
@@ -32,9 +111,54 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
        FROM users u
        LEFT JOIN roles r ON u.role_id = r.id
        LEFT JOIN users mgr ON u.assigned_regional_manager_id = mgr.id
-       WHERE ${E}
+       WHERE ${whereClause}
        ORDER BY u.created_at DESC
-       LIMIT $${e} OFFSET $`+(e+1),[..._,i,o])).rows.map(e=>({...e,is_director_locked:"director"===String(e.role||"").toLowerCase()}));a.json({data:h,pagination:{total:p,page:t,limit:i,pages:Math.ceil(p/i)}})}catch(e){console.error("Error fetching users:",e),a.status(500).json({error:"Server error",message:"Failed to fetch users"})}},getUserById=(exports.getAllUsers=getAllUsers,async(e,r)=>{try{var a=e.organization?.id,s=e.params.id;if(!a)return r.status(400).json({error:"Organization context required"});var t=e.user?.id;if(t){var i=await(0,role_access_1.getAccessibleUserIds)(t),o=parseInt(s,10);if(!Number.isNaN(o)&&!i.includes(o))return r.status(403).json({error:"Forbidden",message:"You do not have permission to access this user"})}var n=await database_1.default.query(`SELECT 
+       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`, [...queryParams, limit, offset]);
+        const usersWithFlags = result.rows.map((user) => ({
+            ...user,
+            is_director_locked: String(user.role || '').toLowerCase() === 'director',
+        }));
+        res.json({
+            data: usersWithFlags,
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit),
+            },
+        });
+    }
+    catch (error) {
+        console.error('Error fetching users:', error);
+        res.status(500).json({
+            error: 'Server error',
+            message: 'Failed to fetch users'
+        });
+    }
+};
+exports.getAllUsers = getAllUsers;
+/**
+ * Get a single user by ID
+ */
+const getUserById = async (req, res) => {
+    try {
+        const organizationId = req.organization?.id;
+        const { id } = req.params;
+        if (!organizationId) {
+            return res.status(400).json({ error: 'Organization context required' });
+        }
+        const requesterId = req.user?.id;
+        if (requesterId) {
+            const accessibleUserIds = await (0, role_access_1.getAccessibleUserIds)(requesterId);
+            const targetId = parseInt(id, 10);
+            if (!Number.isNaN(targetId) && !accessibleUserIds.includes(targetId)) {
+                return res.status(403).json({
+                    error: 'Forbidden',
+                    message: 'You do not have permission to access this user',
+                });
+            }
+        }
+        const result = await database_1.default.query(`SELECT 
         u.id,
         u.name,
         u.email,
@@ -50,32 +174,424 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
        FROM users u
        LEFT JOIN roles r ON u.role_id = r.id
        LEFT JOIN users mgr ON u.assigned_regional_manager_id = mgr.id
-       WHERE u.id = $1 AND u.organization_id = $2`,[s,a]);if(0===n.rows.length)return r.status(404).json({error:"Not found",message:"User not found"});var u=n.rows[0],d=await database_1.default.query(`SELECT r.id, r.name FROM regions r
+       WHERE u.id = $1 AND u.organization_id = $2`, [id, organizationId]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                error: 'Not found',
+                message: 'User not found'
+            });
+        }
+        const user = result.rows[0];
+        // Fetch assigned regions
+        const regionsResult = await database_1.default.query(`SELECT r.id, r.name FROM regions r
        INNER JOIN user_regions ur ON r.id = ur.region_id
-       WHERE ur.user_id = $1`,[s]),l=await database_1.default.query(`SELECT a.id, a.name FROM areas a
+       WHERE ur.user_id = $1`, [id]);
+        // Fetch assigned areas
+        const areasResult = await database_1.default.query(`SELECT a.id, a.name FROM areas a
        INNER JOIN user_areas ua ON a.id = ua.area_id
-       WHERE ua.user_id = $1`,[s]);r.json({data:{...u,regions:d.rows,areas:l.rows,is_director_locked:"director"===String(u.role||"").toLowerCase()}})}catch(e){console.error("Error fetching user:",e),r.status(500).json({error:"Server error",message:"Failed to fetch user"})}}),createUser=(exports.getUserById=getUserById,async(e,r)=>{try{var a=e.organization?.id;if(!a)return r.status(400).json({error:"Organization context required"});var{name:s,email:t,phone:i,password:o,role:n,hierarchy_level:u,assigned_regional_manager_id:d,region_ids:l,area_ids:_}=e.body;if(!(s&&t&&i&&o&&n))return r.status(400).json({error:"Validation error",message:"Name, email, phone, password, and role are required"});if(0<(await database_1.default.query("SELECT id FROM users WHERE email = $1",[t])).rows.length)return r.status(400).json({error:"Conflict",message:"User with this email already exists"});var g=await findRoleByName(n,a);if(0===g.rows.length)return r.status(400).json({error:"Validation error",message:"Invalid role"});var c=g.rows[0].id,E=String(g.rows[0].name||n),m="director"===E.toLowerCase(),p=m?1:u||0,h=!m&&d||null,N=!m&&Array.isArray(l)?l:[],R=Array.isArray(_)?_:[],f=await bcryptjs_1.default.hash(o,10),O=(await database_1.default.query(`INSERT INTO users (name, email, phone, password, role_id, organization_id, hierarchy_level, assigned_regional_manager_id, is_active)
+       WHERE ua.user_id = $1`, [id]);
+        res.json({
+            data: {
+                ...user,
+                regions: regionsResult.rows,
+                areas: areasResult.rows,
+                is_director_locked: String(user.role || '').toLowerCase() === 'director',
+            },
+        });
+    }
+    catch (error) {
+        console.error('Error fetching user:', error);
+        res.status(500).json({
+            error: 'Server error',
+            message: 'Failed to fetch user'
+        });
+    }
+};
+exports.getUserById = getUserById;
+/**
+ * Create a new user
+ */
+const createUser = async (req, res) => {
+    try {
+        const organizationId = req.organization?.id;
+        if (!organizationId) {
+            return res.status(400).json({ error: 'Organization context required' });
+        }
+        const { name, email, phone, password, role, hierarchy_level, assigned_regional_manager_id, region_ids, area_ids } = req.body;
+        // Validate required fields
+        if (!name || !email || !phone || !password || !role) {
+            return res.status(400).json({
+                error: 'Validation error',
+                message: 'Name, email, phone, password, and role are required'
+            });
+        }
+        // Check if user already exists
+        const existingUser = await database_1.default.query('SELECT id FROM users WHERE email = $1', [email]);
+        if (existingUser.rows.length > 0) {
+            return res.status(400).json({
+                error: 'Conflict',
+                message: 'User with this email already exists'
+            });
+        }
+        // Get role_id from role name
+        const roleResult = await findRoleByName(role, organizationId);
+        if (roleResult.rows.length === 0) {
+            return res.status(400).json({
+                error: 'Validation error',
+                message: 'Invalid role'
+            });
+        }
+        const roleId = roleResult.rows[0].id;
+        const resolvedRoleName = String(roleResult.rows[0].name || role);
+        const isDirectorRole = resolvedRoleName.toLowerCase() === 'director';
+        const effectiveHierarchyLevel = isDirectorRole ? 1 : (hierarchy_level || 0);
+        const effectiveManagerId = isDirectorRole ? null : (assigned_regional_manager_id || null);
+        const effectiveRegionIds = isDirectorRole ? [] : (Array.isArray(region_ids) ? region_ids : []);
+        const effectiveAreaIds = Array.isArray(area_ids) ? area_ids : [];
+        // Hash password
+        const hashedPassword = await bcryptjs_1.default.hash(password, 10);
+        // Insert user
+        const result = await database_1.default.query(`INSERT INTO users (name, email, phone, password, role_id, organization_id, hierarchy_level, assigned_regional_manager_id, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
-       RETURNING id, name, email, phone, organization_id, is_active, created_at, hierarchy_level, assigned_regional_manager_id`,[s,t,i,f,c,a,p,h])).rows[0];if(0<N.length)for(var y of N)await database_1.default.query("INSERT INTO user_regions (user_id, region_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",[O.id,y]);if(0<R.length)for(var v of R)await database_1.default.query("INSERT INTO user_areas (user_id, area_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",[O.id,v]);var w=await database_1.default.query(`SELECT r.id, r.name FROM regions r
+       RETURNING id, name, email, phone, organization_id, is_active, created_at, hierarchy_level, assigned_regional_manager_id`, [name, email, phone, hashedPassword, roleId, organizationId, effectiveHierarchyLevel, effectiveManagerId]);
+        const newUser = result.rows[0];
+        // Assign regions if provided
+        if (effectiveRegionIds.length > 0) {
+            for (const regionId of effectiveRegionIds) {
+                await database_1.default.query('INSERT INTO user_regions (user_id, region_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [newUser.id, regionId]);
+            }
+        }
+        // Assign areas if provided
+        if (effectiveAreaIds.length > 0) {
+            for (const areaId of effectiveAreaIds) {
+                await database_1.default.query('INSERT INTO user_areas (user_id, area_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [newUser.id, areaId]);
+            }
+        }
+        // Fetch assigned regions
+        const regionsResult = await database_1.default.query(`SELECT r.id, r.name FROM regions r
        INNER JOIN user_regions ur ON r.id = ur.region_id
-       WHERE ur.user_id = $1`,[O.id]),I=await database_1.default.query(`SELECT a.id, a.name FROM areas a
+       WHERE ur.user_id = $1`, [newUser.id]);
+        // Fetch assigned areas
+        const areasResult = await database_1.default.query(`SELECT a.id, a.name FROM areas a
        INNER JOIN user_areas ua ON a.id = ua.area_id
-       WHERE ua.user_id = $1`,[O.id]);r.status(201).json({data:{...O,role:E,role_id:c,regions:w.rows,areas:I.rows,is_director_locked:m},message:"User created successfully"})}catch(e){console.error("Error creating user:",e),r.status(500).json({error:"Server error",message:"Failed to create user"})}}),updateUser=(exports.createUser=createUser,async(r,a)=>{try{var s=r.organization?.id,t=r.params.id;if(!s)return a.status(400).json({error:"Organization context required"});var{name:i,email:o,phone:n,role:u,hierarchy_level:d,is_active:l,assigned_regional_manager_id:_,region_ids:g,area_ids:c}=r.body,E=await database_1.default.query(`SELECT u.id, r.name as current_role
+       WHERE ua.user_id = $1`, [newUser.id]);
+        res.status(201).json({
+            data: {
+                ...newUser,
+                role: resolvedRoleName,
+                role_id: roleId,
+                regions: regionsResult.rows,
+                areas: areasResult.rows,
+                is_director_locked: isDirectorRole,
+            },
+            message: 'User created successfully',
+        });
+    }
+    catch (error) {
+        console.error('Error creating user:', error);
+        res.status(500).json({
+            error: 'Server error',
+            message: 'Failed to create user'
+        });
+    }
+};
+exports.createUser = createUser;
+/**
+ * Update an existing user
+ */
+const updateUser = async (req, res) => {
+    try {
+        const organizationId = req.organization?.id;
+        const { id } = req.params;
+        if (!organizationId) {
+            return res.status(400).json({ error: 'Organization context required' });
+        }
+        const { name, email, phone, role, hierarchy_level, is_active, assigned_regional_manager_id, region_ids, area_ids } = req.body;
+        // Check if user exists and belongs to organization
+        const existingUser = await database_1.default.query(`SELECT u.id, r.name as current_role
        FROM users u
        LEFT JOIN roles r ON u.role_id = r.id
-       WHERE u.id = $1 AND u.organization_id = $2`,[t,s]);if(0===E.rows.length)return a.status(404).json({error:"Not found",message:"User not found"});var m,p="director"===String(u??E.rows[0].current_role??"").toLowerCase(),h=[],N=[];let e=1;if(void 0!==i&&(h.push("name = $"+e),N.push(i),e++),void 0!==o&&(h.push("email = $"+e),N.push(o),e++),void 0!==n&&(h.push("phone = $"+e),N.push(n),e++),p||void 0===d||(h.push("hierarchy_level = $"+e),N.push(d),e++),void 0!==l&&(h.push("is_active = $"+e),N.push(l),e++),p||void 0===_||(h.push("assigned_regional_manager_id = $"+e),N.push(_||null),e++),void 0!==u){var R=await findRoleByName(u,s);if(0===R.rows.length)return a.status(400).json({error:"Validation error",message:"Invalid role"});m=R.rows[0].id,h.push("role_id = $"+e),N.push(m),e++}if(p&&(h.push("hierarchy_level = $"+e),N.push(1),e++,h.push("assigned_regional_manager_id = $"+e),N.push(null),e++),0===h.length)return a.status(400).json({error:"Validation error",message:"No fields to update"});N.push(t);var f=(await database_1.default.query(`UPDATE users 
-       SET ${h.join(", ")}
-       WHERE id = $${e}
-       RETURNING id, name, email, phone, organization_id, is_active, created_at, hierarchy_level, role_id`,N)).rows[0],O=p||void 0!==g,y=!p&&Array.isArray(g)?g:[];if(O&&(await database_1.default.query("DELETE FROM user_regions WHERE user_id = $1",[t]),0<y.length))for(var v of y)await database_1.default.query("INSERT INTO user_regions (user_id, region_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",[t,v]);if(void 0!==c){var w=Array.isArray(c)?c:[];if(await database_1.default.query("DELETE FROM user_areas WHERE user_id = $1",[t]),0<w.length)for(var I of w)await database_1.default.query("INSERT INTO user_areas (user_id, area_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",[t,I])}var $=await database_1.default.query("SELECT name FROM roles WHERE id = $1",[f.role_id]),T=String($.rows[0]?.name||""),U=await database_1.default.query(`SELECT r.id, r.name FROM regions r
+       WHERE u.id = $1 AND u.organization_id = $2`, [id, organizationId]);
+        if (existingUser.rows.length === 0) {
+            return res.status(404).json({
+                error: 'Not found',
+                message: 'User not found'
+            });
+        }
+        const targetRoleName = String(role ?? existingUser.rows[0].current_role ?? '');
+        const isDirectorTargetRole = targetRoleName.toLowerCase() === 'director';
+        // Build update query dynamically
+        const updateFields = [];
+        const updateValues = [];
+        let paramIndex = 1;
+        if (name !== undefined) {
+            updateFields.push(`name = $${paramIndex}`);
+            updateValues.push(name);
+            paramIndex++;
+        }
+        if (email !== undefined) {
+            updateFields.push(`email = $${paramIndex}`);
+            updateValues.push(email);
+            paramIndex++;
+        }
+        if (phone !== undefined) {
+            updateFields.push(`phone = $${paramIndex}`);
+            updateValues.push(phone);
+            paramIndex++;
+        }
+        if (!isDirectorTargetRole && hierarchy_level !== undefined) {
+            updateFields.push(`hierarchy_level = $${paramIndex}`);
+            updateValues.push(hierarchy_level);
+            paramIndex++;
+        }
+        if (is_active !== undefined) {
+            updateFields.push(`is_active = $${paramIndex}`);
+            updateValues.push(is_active);
+            paramIndex++;
+        }
+        if (!isDirectorTargetRole && assigned_regional_manager_id !== undefined) {
+            updateFields.push(`assigned_regional_manager_id = $${paramIndex}`);
+            updateValues.push(assigned_regional_manager_id || null);
+            paramIndex++;
+        }
+        // Handle role update
+        let roleId;
+        if (role !== undefined) {
+            const roleResult = await findRoleByName(role, organizationId);
+            if (roleResult.rows.length === 0) {
+                return res.status(400).json({
+                    error: 'Validation error',
+                    message: 'Invalid role'
+                });
+            }
+            roleId = roleResult.rows[0].id;
+            updateFields.push(`role_id = $${paramIndex}`);
+            updateValues.push(roleId);
+            paramIndex++;
+        }
+        // Director users must always be level 1 and have no reporting manager
+        if (isDirectorTargetRole) {
+            updateFields.push(`hierarchy_level = $${paramIndex}`);
+            updateValues.push(1);
+            paramIndex++;
+            updateFields.push(`assigned_regional_manager_id = $${paramIndex}`);
+            updateValues.push(null);
+            paramIndex++;
+        }
+        if (updateFields.length === 0) {
+            return res.status(400).json({
+                error: 'Validation error',
+                message: 'No fields to update'
+            });
+        }
+        // Add id to the values
+        updateValues.push(id);
+        // Execute update
+        const result = await database_1.default.query(`UPDATE users 
+       SET ${updateFields.join(', ')}
+       WHERE id = $${paramIndex}
+       RETURNING id, name, email, phone, organization_id, is_active, created_at, hierarchy_level, role_id`, updateValues);
+        const updatedUser = result.rows[0];
+        // Update regions if provided
+        const shouldUpdateRegions = isDirectorTargetRole || region_ids !== undefined;
+        const finalRegionIds = isDirectorTargetRole ? [] : (Array.isArray(region_ids) ? region_ids : []);
+        if (shouldUpdateRegions) {
+            // Clear existing regions
+            await database_1.default.query('DELETE FROM user_regions WHERE user_id = $1', [id]);
+            // Add new regions
+            if (finalRegionIds.length > 0) {
+                for (const regionId of finalRegionIds) {
+                    await database_1.default.query('INSERT INTO user_regions (user_id, region_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, regionId]);
+                }
+            }
+        }
+        // Update areas if provided
+        if (area_ids !== undefined) {
+            const finalAreaIds = Array.isArray(area_ids) ? area_ids : [];
+            // Clear existing areas
+            await database_1.default.query('DELETE FROM user_areas WHERE user_id = $1', [id]);
+            // Add new areas
+            if (finalAreaIds.length > 0) {
+                for (const areaId of finalAreaIds) {
+                    await database_1.default.query('INSERT INTO user_areas (user_id, area_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, areaId]);
+                }
+            }
+        }
+        // Get role name
+        const updatedRoleResult = await database_1.default.query('SELECT name FROM roles WHERE id = $1', [updatedUser.role_id]);
+        const resolvedUpdatedRole = String(updatedRoleResult.rows[0]?.name || '');
+        // Fetch assigned regions
+        const regionsResult = await database_1.default.query(`SELECT r.id, r.name FROM regions r
        INNER JOIN user_regions ur ON r.id = ur.region_id
-       WHERE ur.user_id = $1`,[t]),C=await database_1.default.query(`SELECT a.id, a.name FROM areas a
+       WHERE ur.user_id = $1`, [id]);
+        // Fetch assigned areas
+        const areasResult = await database_1.default.query(`SELECT a.id, a.name FROM areas a
        INNER JOIN user_areas ua ON a.id = ua.area_id
-       WHERE ua.user_id = $1`,[t]);a.json({data:{...f,role:T,regions:U.rows,areas:C.rows,is_director_locked:"director"===T.toLowerCase()},message:"User updated successfully"})}catch(e){console.error("Error updating user:",e),a.status(500).json({error:"Server error",message:"Failed to update user"})}}),deleteUser=(exports.updateUser=updateUser,async(e,r)=>{try{var a=e.organization?.id,s=e.params.id;return a?0===(await database_1.default.query("SELECT id FROM users WHERE id = $1 AND organization_id = $2",[s,a])).rows.length?r.status(404).json({error:"Not found",message:"User not found"}):(await database_1.default.query("UPDATE users SET is_active = false WHERE id = $1",[s]),void r.json({message:"User deleted successfully"})):r.status(400).json({error:"Organization context required"})}catch(e){console.error("Error deleting user:",e),r.status(500).json({error:"Server error",message:"Failed to delete user"})}}),getUserRegions=(exports.deleteUser=deleteUser,async(e,r)=>{try{var a=e.organization?.id,s=e.user?.id,t=e.params.id,i=parseInt(t,10);if(!a)return r.status(400).json({error:"Organization context required"});if(Number.isNaN(i))return r.status(400).json({error:"Invalid user id"});if(s)if(!(await(0,role_access_1.getAccessibleUserIds)(s)).includes(i))return r.status(403).json({error:"Forbidden",message:"You do not have permission to access this user regions"});var o=["r.id","r.name"],n=(await hasTableColumn("regions","code")&&o.push("r.code"),await hasTableColumn("regions","description")&&o.push("r.description"),await database_1.default.query(`SELECT ${o.join(", ")}
+       WHERE ua.user_id = $1`, [id]);
+        res.json({
+            data: {
+                ...updatedUser,
+                role: resolvedUpdatedRole,
+                regions: regionsResult.rows,
+                areas: areasResult.rows,
+                is_director_locked: resolvedUpdatedRole.toLowerCase() === 'director',
+            },
+            message: 'User updated successfully',
+        });
+    }
+    catch (error) {
+        console.error('Error updating user:', error);
+        res.status(500).json({
+            error: 'Server error',
+            message: 'Failed to update user'
+        });
+    }
+};
+exports.updateUser = updateUser;
+/**
+ * Delete a user (soft delete by setting is_active = false)
+ */
+const deleteUser = async (req, res) => {
+    try {
+        const organizationId = req.organization?.id;
+        const { id } = req.params;
+        if (!organizationId) {
+            return res.status(400).json({ error: 'Organization context required' });
+        }
+        // Check if user exists and belongs to organization
+        const existingUser = await database_1.default.query('SELECT id FROM users WHERE id = $1 AND organization_id = $2', [id, organizationId]);
+        if (existingUser.rows.length === 0) {
+            return res.status(404).json({
+                error: 'Not found',
+                message: 'User not found'
+            });
+        }
+        // Soft delete by setting is_active to false
+        await database_1.default.query('UPDATE users SET is_active = false WHERE id = $1', [id]);
+        res.json({
+            message: 'User deleted successfully',
+        });
+    }
+    catch (error) {
+        console.error('Error deleting user:', error);
+        res.status(500).json({
+            error: 'Server error',
+            message: 'Failed to delete user'
+        });
+    }
+};
+exports.deleteUser = deleteUser;
+/**
+ * Get regions assigned to a specific user
+ */
+const getUserRegions = async (req, res) => {
+    try {
+        const organizationId = req.organization?.id;
+        const requesterId = req.user?.id;
+        const { id } = req.params;
+        const targetUserId = parseInt(id, 10);
+        if (!organizationId) {
+            return res.status(400).json({ error: 'Organization context required' });
+        }
+        if (Number.isNaN(targetUserId)) {
+            return res.status(400).json({ error: 'Invalid user id' });
+        }
+        if (requesterId) {
+            const accessibleUserIds = await (0, role_access_1.getAccessibleUserIds)(requesterId);
+            if (!accessibleUserIds.includes(targetUserId)) {
+                return res.status(403).json({
+                    error: 'Forbidden',
+                    message: 'You do not have permission to access this user regions',
+                });
+            }
+        }
+        const regionColumns = ['r.id', 'r.name'];
+        if (await hasTableColumn('regions', 'code'))
+            regionColumns.push('r.code');
+        if (await hasTableColumn('regions', 'description'))
+            regionColumns.push('r.description');
+        const regionsResult = await database_1.default.query(`SELECT ${regionColumns.join(', ')}
        FROM regions r
        INNER JOIN user_regions ur ON r.id = ur.region_id
        INNER JOIN users u ON u.id = ur.user_id
        WHERE ur.user_id = $1 AND u.organization_id = $2
-       ORDER BY r.name`,[i,a]));r.json({data:n.rows})}catch(e){console.error("Error fetching user regions:",e),r.status(500).json({error:"Server error",message:"Failed to fetch user regions"})}}),getAllRoles=(exports.getUserRegions=getUserRegions,async(r,a)=>{try{var s=r.organization?.id;if(!s)return a.status(400).json({error:"Organization context required"});var t=await hasTableColumn("roles","organization_id");let e;e=t?await database_1.default.query("SELECT id, name FROM roles WHERE organization_id = $1 ORDER BY name ASC",[s]):await database_1.default.query("SELECT id, name FROM roles ORDER BY name ASC"),a.json({data:e.rows})}catch(e){console.error("Error fetching roles:",e),a.status(500).json({error:"Server error",message:"Failed to fetch roles"})}}),getMyReporteesCount=(exports.getAllRoles=getAllRoles,async(e,r)=>{try{var a,s,t=e.user?.id;return t?(a=await database_1.default.query(`SELECT COUNT(*) as count
+       ORDER BY r.name`, [targetUserId, organizationId]);
+        res.json({
+            data: regionsResult.rows,
+        });
+    }
+    catch (error) {
+        console.error('Error fetching user regions:', error);
+        res.status(500).json({
+            error: 'Server error',
+            message: 'Failed to fetch user regions'
+        });
+    }
+};
+exports.getUserRegions = getUserRegions;
+/**
+ * Get all roles
+ */
+const getAllRoles = async (req, res) => {
+    try {
+        const organizationId = req.organization?.id;
+        if (!organizationId) {
+            return res.status(400).json({ error: 'Organization context required' });
+        }
+        // Check if roles table has organization_id column
+        const hasRoleOrgColumn = await hasTableColumn('roles', 'organization_id');
+        let result;
+        if (hasRoleOrgColumn) {
+            result = await database_1.default.query('SELECT id, name FROM roles WHERE organization_id = $1 ORDER BY name ASC', [organizationId]);
+        }
+        else {
+            // Fallback: get all roles (organization-agnostic schema)
+            result = await database_1.default.query('SELECT id, name FROM roles ORDER BY name ASC');
+        }
+        res.json({
+            data: result.rows,
+        });
+    }
+    catch (error) {
+        console.error('Error fetching roles:', error);
+        res.status(500).json({
+            error: 'Server error',
+            message: 'Failed to fetch roles'
+        });
+    }
+};
+exports.getAllRoles = getAllRoles;
+/**
+ * GET /users/me/reportees-count
+ * Returns the count of active users who directly report to the logged-in user.
+ * Pure hierarchy-based — no role names or IDs involved.
+ */
+const getMyReporteesCount = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const result = await database_1.default.query(`SELECT COUNT(*) as count
        FROM users
        WHERE assigned_regional_manager_id = $1
-         AND is_active = true`,[t]),s=parseInt(a.rows[0]?.count||"0",10),r.json({count:s,has_reportees:0<s})):r.status(401).json({error:"Unauthorized"})}catch(e){return console.error("Error fetching reportees count:",e),r.status(500).json({error:"Server error",message:"Failed to fetch reportees count"})}});exports.getMyReporteesCount=getMyReporteesCount,exports.default={getAllUsers:exports.getAllUsers,getUserById:exports.getUserById,createUser:exports.createUser,updateUser:exports.updateUser,deleteUser:exports.deleteUser,getUserRegions:exports.getUserRegions,getAllRoles:exports.getAllRoles,getMyReporteesCount:exports.getMyReporteesCount};
+         AND is_active = true`, [userId]);
+        const count = parseInt(result.rows[0]?.count || '0', 10);
+        return res.json({ count, has_reportees: count > 0 });
+    }
+    catch (error) {
+        console.error('Error fetching reportees count:', error);
+        return res.status(500).json({ error: 'Server error', message: 'Failed to fetch reportees count' });
+    }
+};
+exports.getMyReporteesCount = getMyReporteesCount;
+exports.default = {
+    getAllUsers: exports.getAllUsers,
+    getUserById: exports.getUserById,
+    createUser: exports.createUser,
+    updateUser: exports.updateUser,
+    deleteUser: exports.deleteUser,
+    getUserRegions: exports.getUserRegions,
+    getAllRoles: exports.getAllRoles,
+    getMyReporteesCount: exports.getMyReporteesCount,
+};

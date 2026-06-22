@@ -1,1 +1,22 @@
-var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0});let express_1=__importDefault(require("express")),auth_1=require("../middleware/auth"),paymentMethodController_1=require("../controllers/paymentMethodController"),router=express_1.default.Router();router.use(auth_1.authenticateToken),router.get("/",paymentMethodController_1.getAllPaymentMethods),router.get("/:id",paymentMethodController_1.getPaymentMethodById),router.post("/",paymentMethodController_1.createPaymentMethod),router.put("/:id",paymentMethodController_1.updatePaymentMethod),router.delete("/:id",paymentMethodController_1.deletePaymentMethod),exports.default=router;
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+const auth_1 = require("../middleware/auth");
+const paymentMethodController_1 = require("../controllers/paymentMethodController");
+const router = express_1.default.Router();
+// All routes require authentication
+router.use(auth_1.authenticateToken);
+// Get all payment methods
+router.get('/', paymentMethodController_1.getAllPaymentMethods);
+// Get single payment method
+router.get('/:id', paymentMethodController_1.getPaymentMethodById);
+// Create new payment method
+router.post('/', paymentMethodController_1.createPaymentMethod);
+// Update payment method
+router.put('/:id', paymentMethodController_1.updatePaymentMethod);
+// Delete payment method
+router.delete('/:id', paymentMethodController_1.deletePaymentMethod);
+exports.default = router;

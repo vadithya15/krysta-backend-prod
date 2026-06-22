@@ -1,1 +1,66 @@
-var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.emitOrderUpdate=exports.emitOrderCreated=exports.emitStockUpdate=exports.getIO=exports.initializeSocket=void 0;let socket_io_1=require("socket.io"),jsonwebtoken_1=__importDefault(require("jsonwebtoken")),io,initializeSocket=e=>((io=new socket_io_1.Server(e,{cors:{origin:process.env.CORS_ORIGIN||"*",methods:["GET","POST"]}})).use((e,t)=>{var o=e.handshake.auth.token;if(!o)return t(new Error("Authentication error"));try{var r=jsonwebtoken_1.default.verify(o,process.env.JWT_SECRET||"secret");e.data.user=r,t()}catch(e){t(new Error("Authentication error"))}}),io.on("connection",e=>{console.log("User connected: "+e.data.user.email),e.on("disconnect",()=>{console.log("User disconnected: "+e.data.user.email)})}),console.log("Socket.IO initialized"),io),getIO=(exports.initializeSocket=initializeSocket,()=>{if(io)return io;throw new Error("Socket.IO not initialized")}),emitStockUpdate=(exports.getIO=getIO,(e,t)=>{io&&io.emit("stock_update",{productId:e,newStock:t,timestamp:new Date})}),emitOrderCreated=(exports.emitStockUpdate=emitStockUpdate,e=>{io&&io.emit("order_created",{order:e,timestamp:new Date})}),emitOrderUpdate=(exports.emitOrderCreated=emitOrderCreated,(e,t)=>{io&&io.emit("order_update",{orderId:e,status:t,timestamp:new Date})});exports.emitOrderUpdate=emitOrderUpdate;
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.emitOrderUpdate = exports.emitOrderCreated = exports.emitStockUpdate = exports.getIO = exports.initializeSocket = void 0;
+const socket_io_1 = require("socket.io");
+const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+let io;
+const initializeSocket = (server) => {
+    io = new socket_io_1.Server(server, {
+        cors: {
+            origin: process.env.CORS_ORIGIN || '*',
+            methods: ['GET', 'POST'],
+        },
+    });
+    io.use((socket, next) => {
+        const token = socket.handshake.auth.token;
+        if (!token) {
+            return next(new Error('Authentication error'));
+        }
+        try {
+            const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET || 'secret');
+            socket.data.user = decoded;
+            next();
+        }
+        catch (error) {
+            next(new Error('Authentication error'));
+        }
+    });
+    io.on('connection', (socket) => {
+        console.log(`User connected: ${socket.data.user.email}`);
+        socket.on('disconnect', () => {
+            console.log(`User disconnected: ${socket.data.user.email}`);
+        });
+    });
+    console.log('Socket.IO initialized');
+    return io;
+};
+exports.initializeSocket = initializeSocket;
+const getIO = () => {
+    if (!io) {
+        throw new Error('Socket.IO not initialized');
+    }
+    return io;
+};
+exports.getIO = getIO;
+// Emit events for real-time updates
+const emitStockUpdate = (productId, newStock) => {
+    if (io) {
+        io.emit('stock_update', { productId, newStock, timestamp: new Date() });
+    }
+};
+exports.emitStockUpdate = emitStockUpdate;
+const emitOrderCreated = (order) => {
+    if (io) {
+        io.emit('order_created', { order, timestamp: new Date() });
+    }
+};
+exports.emitOrderCreated = emitOrderCreated;
+const emitOrderUpdate = (orderId, status) => {
+    if (io) {
+        io.emit('order_update', { orderId, status, timestamp: new Date() });
+    }
+};
+exports.emitOrderUpdate = emitOrderUpdate;

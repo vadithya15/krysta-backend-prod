@@ -1,4 +1,15 @@
-var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0});let database_1=__importDefault(require("./database")),setupMenuPermissions=async()=>{var a=await database_1.default.connect();try{console.log("Setting up menu permissions..."),await a.query(`
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const database_1 = __importDefault(require("./database"));
+const setupMenuPermissions = async () => {
+    const client = await database_1.default.connect();
+    try {
+        console.log('Setting up menu permissions...');
+        // Create menu_items table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS menu_items (
         id SERIAL PRIMARY KEY,
         key VARCHAR(50) UNIQUE NOT NULL,
@@ -11,7 +22,10 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
         is_active BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),console.log("✓ Created menu_items table"),await a.query(`
+    `);
+        console.log('✓ Created menu_items table');
+        // Create role_menu_permissions table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS role_menu_permissions (
         id SERIAL PRIMARY KEY,
         role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
@@ -19,9 +33,14 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(role_id, menu_item_id)
       );
-    `),console.log("✓ Created role_menu_permissions table"),await a.query(`
+    `);
+        console.log('✓ Created role_menu_permissions table');
+        // Delete the old distanceTracking menu item if it exists
+        await client.query(`
       DELETE FROM menu_items WHERE key = 'distanceTracking';
-    `),await a.query(`
+    `);
+        // Insert menu items
+        await client.query(`
       INSERT INTO menu_items (key, label, screen, icon_name, icon_family, color, display_order) VALUES
         ('dashboard', 'Dashboard', 'Dashboard', 'dashboard', 'MaterialIcons', '#00C896', 0),
         ('startDay', 'Start Day', 'StartDay', 'play-circle-outline', 'MaterialIcons', '#FF9800', 1),
@@ -36,16 +55,80 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
         ('approval', 'Approval', 'Approval', 'check-circle', 'MaterialIcons', '#2196F3', 10),
         ('usersLocation', 'Distance Tracking', 'UsersMap', 'map', 'MaterialIcons', '#00BCD4', 11)
       ON CONFLICT (key) DO NOTHING;
-    `),console.log("✓ Inserted menu items");var i=await a.query("SELECT id, name FROM roles;"),o=i.rows.find(e=>"Sales Agent"===e.name),r=i.rows.find(e=>"Manager"===e.name),n=i.rows.find(e=>"Admin"===e.name);let e=await a.query("SELECT id, key FROM menu_items;");var s;if(o){for(s of["dashboard","startDay","dealerVisit","orderBooking","paymentCollection","manualExpense"]){var t=(a=>e.rows.find(e=>e.key===a)?.id)(s);t&&await a.query(`
+    `);
+        console.log('✓ Inserted menu items');
+        // Get role IDs
+        const rolesResult = await client.query('SELECT id, name FROM roles;');
+        const salesAgentRole = rolesResult.rows.find(r => r.name === 'Sales Agent');
+        const managerRole = rolesResult.rows.find(r => r.name === 'Manager');
+        const adminRole = rolesResult.rows.find(r => r.name === 'Admin');
+        // Get menu item IDs
+        const menuResult = await client.query('SELECT id, key FROM menu_items;');
+        const getMenuId = (key) => menuResult.rows.find(m => m.key === key)?.id;
+        // Sales Agent permissions - only specific items
+        if (salesAgentRole) {
+            const salesAgentMenus = [
+                'dashboard',
+                'startDay',
+                'dealerVisit',
+                'orderBooking',
+                'paymentCollection',
+                'manualExpense'
+            ];
+            for (const menuKey of salesAgentMenus) {
+                const menuId = getMenuId(menuKey);
+                if (menuId) {
+                    await client.query(`
             INSERT INTO role_menu_permissions (role_id, menu_item_id)
             VALUES ($1, $2)
             ON CONFLICT (role_id, menu_item_id) DO NOTHING;
-          `,[o.id,t])}console.log("✓ Set Sales Agent permissions")}if(r){for(var l of e.rows)await a.query(`
+          `, [salesAgentRole.id, menuId]);
+                }
+            }
+            console.log('✓ Set Sales Agent permissions');
+        }
+        // Manager permissions - all items
+        if (managerRole) {
+            for (const menu of menuResult.rows) {
+                await client.query(`
           INSERT INTO role_menu_permissions (role_id, menu_item_id)
           VALUES ($1, $2)
           ON CONFLICT (role_id, menu_item_id) DO NOTHING;
-        `,[r.id,l.id]);console.log("✓ Set Manager permissions (all items)")}if(n){for(var m of e.rows)await a.query(`
+        `, [managerRole.id, menu.id]);
+            }
+            console.log('✓ Set Manager permissions (all items)');
+        }
+        // Admin permissions - all items
+        if (adminRole) {
+            for (const menu of menuResult.rows) {
+                await client.query(`
           INSERT INTO role_menu_permissions (role_id, menu_item_id)
           VALUES ($1, $2)
           ON CONFLICT (role_id, menu_item_id) DO NOTHING;
-        `,[n.id,m.id]);console.log("✓ Set Admin permissions (all items)")}console.log("Menu permissions setup completed successfully!")}catch(e){throw console.error("Error setting up menu permissions:",e),e}finally{a.release()}};require.main===module&&setupMenuPermissions().then(()=>{console.log("Setup complete"),process.exit(0)}).catch(e=>{console.error("Setup failed:",e),process.exit(1)}),exports.default=setupMenuPermissions;
+        `, [adminRole.id, menu.id]);
+            }
+            console.log('✓ Set Admin permissions (all items)');
+        }
+        console.log('Menu permissions setup completed successfully!');
+    }
+    catch (error) {
+        console.error('Error setting up menu permissions:', error);
+        throw error;
+    }
+    finally {
+        client.release();
+    }
+};
+// Run setup if this file is executed directly
+if (require.main === module) {
+    setupMenuPermissions()
+        .then(() => {
+        console.log('Setup complete');
+        process.exit(0);
+    })
+        .catch((error) => {
+        console.error('Setup failed:', error);
+        process.exit(1);
+    });
+}
+exports.default = setupMenuPermissions;

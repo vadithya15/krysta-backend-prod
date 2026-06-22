@@ -1,6 +1,140 @@
-var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.deleteDealerPlan=exports.updateDealerPlan=exports.createDealerPlan=exports.getDealerPlans=void 0;let database_1=__importDefault(require("../config/database")),cache_1=require("../utils/cache");async function invalidateRouteCacheForPlan(e,a){try{var r=await database_1.default.query("DELETE FROM planned_routes WHERE user_id = $1 AND plan_date = $2",[e,a]),t=`route:${e}:${a}:`,l=cache_1.routeCache.deleteByPattern(t);console.log(`🗑️ Invalidated route cache: ${r.rowCount} DB rows + ${l} memory entries for user=${e}, date=`+a)}catch(e){console.error("Error invalidating route cache:",e)}}let getDealerPlans=async(e,a)=>{try{var{user_id:r,date:t}=e.query,l=null!=r?Number(r):null,n=e.user?.id?Number(e.user.id):null,d=Number.isFinite(l)?l:n,s=[],o=[],u=(null!=d&&(s.push("user_id = $"+(o.length+1)),o.push(d)),t&&(s.push(`plan_date = $${o.length+1}::date`),o.push(t)),s.length?"WHERE "+s.join(" AND "):""),i=await database_1.default.query(`SELECT dp.*, d.name AS dealer_name, d.address AS dealer_address, d.phone AS dealer_phone,
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.deleteDealerPlan = exports.updateDealerPlan = exports.createDealerPlan = exports.getDealerPlans = void 0;
+const database_1 = __importDefault(require("../config/database"));
+const cache_1 = require("../utils/cache");
+/**
+ * Invalidate route cache for a given user and plan_date
+ * Called whenever dealer plan is created/updated/deleted
+ */
+async function invalidateRouteCacheForPlan(user_id, plan_date) {
+    try {
+        // Delete from database
+        const deleteResult = await database_1.default.query(`DELETE FROM planned_routes WHERE user_id = $1 AND plan_date = $2`, [user_id, plan_date]);
+        // Clear from in-memory cache
+        const cacheKeyPattern = `route:${user_id}:${plan_date}:`;
+        const deletedCount = cache_1.routeCache.deleteByPattern(cacheKeyPattern);
+        console.log(`🗑️ Invalidated route cache: ${deleteResult.rowCount} DB rows + ${deletedCount} memory entries for user=${user_id}, date=${plan_date}`);
+    }
+    catch (error) {
+        console.error('Error invalidating route cache:', error);
+        // Don't throw - cache invalidation failure shouldn't block plan operations
+    }
+}
+// Get all dealer plans for a user/date
+const getDealerPlans = async (req, res) => {
+    try {
+        const { user_id, date } = req.query;
+        const requestedUserId = user_id != null ? Number(user_id) : null;
+        const authenticatedUserId = req.user?.id ? Number(req.user.id) : null;
+        const effectiveUserId = Number.isFinite(requestedUserId) ? requestedUserId : authenticatedUserId;
+        let where = [];
+        let params = [];
+        if (effectiveUserId != null) {
+            where.push(`user_id = $${params.length + 1}`);
+            params.push(effectiveUserId);
+        }
+        if (date) {
+            where.push(`plan_date = $${params.length + 1}::date`);
+            params.push(date);
+        }
+        const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+        const result = await database_1.default.query(`SELECT dp.*, d.name AS dealer_name, d.address AS dealer_address, d.phone AS dealer_phone,
               d.latitude AS latitude, d.longitude AS longitude
        FROM dealer_plans dp
        LEFT JOIN dealers d ON d.id = dp.dealer_id
-       ${u}
-       ORDER BY dp.plan_date DESC`,o);a.json({plans:i.rows})}catch(e){console.error("Get dealer plans error:",e),a.status(500).json({error:"Server error fetching dealer plans"})}},createDealerPlan=(exports.getDealerPlans=getDealerPlans,async(e,a)=>{try{var r,t,l,n,{user_id:d,dealer_id:s,plan_date:o,notes:u}=e.body;return d&&s&&o?(t=0<(r=await database_1.default.query("SELECT setting_value FROM settings WHERE setting_key = 'route_max_waypoints' LIMIT 1")).rows.length?parseInt(r.rows[0].setting_value,10):20,l=await database_1.default.query("SELECT COUNT(*) as count FROM dealer_plans WHERE user_id = $1 AND plan_date = $2",[d,o]),t<=parseInt(l.rows[0].count,10)?a.status(400).json({code:"MAX_DEALERS_EXCEEDED",error:`Maximum ${t} dealers allowed per day`,maxWaypoints:t}):(n=await database_1.default.query("INSERT INTO dealer_plans (user_id, dealer_id, plan_date, notes) VALUES ($1, $2, $3, $4) RETURNING *",[d,s,o,u||null]),await invalidateRouteCacheForPlan(d,o),void a.status(201).json({message:"Dealer plan created",plan:n.rows[0]}))):a.status(400).json({error:"user_id, dealer_id, and plan_date are required"})}catch(e){console.error("Create dealer plan error:",e),a.status(500).json({error:"Server error creating dealer plan"})}}),updateDealerPlan=(exports.createDealerPlan=createDealerPlan,async(e,a)=>{try{var r=e.params.id,{plan_date:t,notes:l}=e.body,n=await database_1.default.query("SELECT user_id, plan_date FROM dealer_plans WHERE id = $1",[r]);if(0===n.rows.length)return a.status(404).json({error:"Dealer plan not found"});var{user_id:d,plan_date:s}=n.rows[0],o=await database_1.default.query("UPDATE dealer_plans SET plan_date = $1, notes = $2 WHERE id = $3 RETURNING *",[t,l,r]);t!==s&&await invalidateRouteCacheForPlan(d,s),await invalidateRouteCacheForPlan(d,t),a.json({message:"Dealer plan updated",plan:o.rows[0]})}catch(e){console.error("Update dealer plan error:",e),a.status(500).json({error:"Server error updating dealer plan"})}}),deleteDealerPlan=(exports.updateDealerPlan=updateDealerPlan,async(e,a)=>{try{var r=e.params.id,t=await database_1.default.query("SELECT user_id, plan_date FROM dealer_plans WHERE id = $1",[r]);if(0===t.rows.length)return a.status(404).json({error:"Dealer plan not found"});var{user_id:l,plan_date:n}=t.rows[0];await database_1.default.query("DELETE FROM dealer_plans WHERE id = $1 RETURNING *",[r]);await invalidateRouteCacheForPlan(l,n),a.json({message:"Dealer plan deleted"})}catch(e){console.error("Delete dealer plan error:",e),a.status(500).json({error:"Server error deleting dealer plan"})}});exports.deleteDealerPlan=deleteDealerPlan;
+       ${whereClause}
+       ORDER BY dp.plan_date DESC`, params);
+        res.json({ plans: result.rows });
+    }
+    catch (error) {
+        console.error('Get dealer plans error:', error);
+        res.status(500).json({ error: 'Server error fetching dealer plans' });
+    }
+};
+exports.getDealerPlans = getDealerPlans;
+// Create a new dealer plan
+const createDealerPlan = async (req, res) => {
+    try {
+        const { user_id, dealer_id, plan_date, notes } = req.body;
+        if (!user_id || !dealer_id || !plan_date) {
+            return res.status(400).json({ error: 'user_id, dealer_id, and plan_date are required' });
+        }
+        // Get max waypoints setting from settings table
+        const settingResult = await database_1.default.query(`SELECT setting_value FROM settings WHERE setting_key = 'route_max_waypoints' LIMIT 1`);
+        const maxWaypoints = settingResult.rows.length > 0
+            ? parseInt(settingResult.rows[0].setting_value, 10)
+            : 20; // Default to 20 if setting not found (to avoid route optimization issues)
+        // Count existing plans for this user and date
+        const countResult = await database_1.default.query(`SELECT COUNT(*) as count FROM dealer_plans WHERE user_id = $1 AND plan_date = $2`, [user_id, plan_date]);
+        const existingCount = parseInt(countResult.rows[0].count, 10);
+        // Check if adding this plan would exceed the limit
+        if (existingCount >= maxWaypoints) {
+            return res.status(400).json({
+                code: 'MAX_DEALERS_EXCEEDED',
+                error: `Maximum ${maxWaypoints} dealers allowed per day`,
+                maxWaypoints
+            });
+        }
+        const result = await database_1.default.query(`INSERT INTO dealer_plans (user_id, dealer_id, plan_date, notes) VALUES ($1, $2, $3, $4) RETURNING *`, [user_id, dealer_id, plan_date, notes || null]);
+        // EVENT-DRIVEN INVALIDATION: Invalidate route cache when plan is added
+        await invalidateRouteCacheForPlan(user_id, plan_date);
+        res.status(201).json({ message: 'Dealer plan created', plan: result.rows[0] });
+    }
+    catch (error) {
+        console.error('Create dealer plan error:', error);
+        res.status(500).json({ error: 'Server error creating dealer plan' });
+    }
+};
+exports.createDealerPlan = createDealerPlan;
+// Update a dealer plan
+const updateDealerPlan = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { plan_date, notes } = req.body;
+        // Get existing plan to find user_id and old plan_date
+        const existingResult = await database_1.default.query(`SELECT user_id, plan_date FROM dealer_plans WHERE id = $1`, [id]);
+        if (existingResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Dealer plan not found' });
+        }
+        const { user_id, plan_date: oldPlanDate } = existingResult.rows[0];
+        const result = await database_1.default.query(`UPDATE dealer_plans SET plan_date = $1, notes = $2 WHERE id = $3 RETURNING *`, [plan_date, notes, id]);
+        // EVENT-DRIVEN INVALIDATION: Invalidate route cache for affected dates
+        // Invalidate old date (if it changed)
+        if (plan_date !== oldPlanDate) {
+            await invalidateRouteCacheForPlan(user_id, oldPlanDate);
+        }
+        // Always invalidate new date
+        await invalidateRouteCacheForPlan(user_id, plan_date);
+        res.json({ message: 'Dealer plan updated', plan: result.rows[0] });
+    }
+    catch (error) {
+        console.error('Update dealer plan error:', error);
+        res.status(500).json({ error: 'Server error updating dealer plan' });
+    }
+};
+exports.updateDealerPlan = updateDealerPlan;
+// Delete a dealer plan
+const deleteDealerPlan = async (req, res) => {
+    try {
+        const { id } = req.params;
+        // Get plan details before deletion for cache invalidation
+        const planResult = await database_1.default.query(`SELECT user_id, plan_date FROM dealer_plans WHERE id = $1`, [id]);
+        if (planResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Dealer plan not found' });
+        }
+        const { user_id, plan_date } = planResult.rows[0];
+        const result = await database_1.default.query(`DELETE FROM dealer_plans WHERE id = $1 RETURNING *`, [id]);
+        // EVENT-DRIVEN INVALIDATION: Invalidate route cache when plan is removed
+        await invalidateRouteCacheForPlan(user_id, plan_date);
+        res.json({ message: 'Dealer plan deleted' });
+    }
+    catch (error) {
+        console.error('Delete dealer plan error:', error);
+        res.status(500).json({ error: 'Server error deleting dealer plan' });
+    }
+};
+exports.deleteDealerPlan = deleteDealerPlan;

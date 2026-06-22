@@ -1,1 +1,93 @@
-var __importDefault=this&&this.__importDefault||function(r){return r&&r.__esModule?r:{default:r}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.deleteOrderStatus=exports.updateOrderStatus=exports.createOrderStatus=exports.getOrderStatusById=exports.getAllOrderStatuses=void 0;let database_1=__importDefault(require("../config/database")),getAllOrderStatuses=async(r,t)=>{try{var e=await database_1.default.query("SELECT * FROM order_status ORDER BY name ASC");t.json(e.rows)}catch(r){console.error("Error fetching order statuses:",r),t.status(500).json({error:"Failed to fetch order statuses"})}},getOrderStatusById=(exports.getAllOrderStatuses=getAllOrderStatuses,async(r,t)=>{try{var e=r.params.id,s=await database_1.default.query("SELECT * FROM order_status WHERE id = $1",[e]);if(0===s.rows.length)return t.status(404).json({error:"Order status not found"});t.json(s.rows[0])}catch(r){console.error("Error fetching order status:",r),t.status(500).json({error:"Failed to fetch order status"})}}),createOrderStatus=(exports.getOrderStatusById=getOrderStatusById,async(r,t)=>{try{var{name:e,description:s}=r.body;if(!e)return t.status(400).json({error:"Name is required"});var a=await database_1.default.query("INSERT INTO order_status (name, description) VALUES ($1, $2) RETURNING *",[e,s||null]);t.status(201).json(a.rows[0])}catch(r){if("23505"===r.code)return t.status(400).json({error:"Order status name already exists"});console.error("Error creating order status:",r),t.status(500).json({error:"Failed to create order status"})}}),updateOrderStatus=(exports.createOrderStatus=createOrderStatus,async(r,t)=>{try{var e=r.params.id,{name:s,description:a}=r.body,o=await database_1.default.query("UPDATE order_status SET name = $1, description = $2 WHERE id = $3 RETURNING *",[s,a||null,e]);if(0===o.rows.length)return t.status(404).json({error:"Order status not found"});t.json(o.rows[0])}catch(r){if("23505"===r.code)return t.status(400).json({error:"Order status name already exists"});console.error("Error updating order status:",r),t.status(500).json({error:"Failed to update order status"})}}),deleteOrderStatus=(exports.updateOrderStatus=updateOrderStatus,async(r,t)=>{try{var e=r.params.id,s=await database_1.default.query("DELETE FROM order_status WHERE id = $1 RETURNING *",[e]);if(0===s.rows.length)return t.status(404).json({error:"Order status not found"});t.json({message:"Order status deleted successfully",orderStatus:s.rows[0]})}catch(r){if("23503"===r.code)return t.status(400).json({error:"Cannot delete order status: still in use by orders"});console.error("Error deleting order status:",r),t.status(500).json({error:"Failed to delete order status"})}});exports.deleteOrderStatus=deleteOrderStatus;
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.deleteOrderStatus = exports.updateOrderStatus = exports.createOrderStatus = exports.getOrderStatusById = exports.getAllOrderStatuses = void 0;
+const database_1 = __importDefault(require("../config/database"));
+// Get all order statuses
+const getAllOrderStatuses = async (req, res) => {
+    try {
+        const result = await database_1.default.query('SELECT * FROM order_status ORDER BY name ASC');
+        res.json(result.rows);
+    }
+    catch (error) {
+        console.error('Error fetching order statuses:', error);
+        res.status(500).json({ error: 'Failed to fetch order statuses' });
+    }
+};
+exports.getAllOrderStatuses = getAllOrderStatuses;
+// Get single order status by ID
+const getOrderStatusById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await database_1.default.query('SELECT * FROM order_status WHERE id = $1', [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Order status not found' });
+        }
+        res.json(result.rows[0]);
+    }
+    catch (error) {
+        console.error('Error fetching order status:', error);
+        res.status(500).json({ error: 'Failed to fetch order status' });
+    }
+};
+exports.getOrderStatusById = getOrderStatusById;
+// Create new order status
+const createOrderStatus = async (req, res) => {
+    try {
+        const { name, description } = req.body;
+        if (!name) {
+            return res.status(400).json({ error: 'Name is required' });
+        }
+        const result = await database_1.default.query('INSERT INTO order_status (name, description) VALUES ($1, $2) RETURNING *', [name, description || null]);
+        res.status(201).json(result.rows[0]);
+    }
+    catch (error) {
+        if (error.code === '23505') {
+            return res.status(400).json({ error: 'Order status name already exists' });
+        }
+        console.error('Error creating order status:', error);
+        res.status(500).json({ error: 'Failed to create order status' });
+    }
+};
+exports.createOrderStatus = createOrderStatus;
+// Update order status
+const updateOrderStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, description } = req.body;
+        const result = await database_1.default.query('UPDATE order_status SET name = $1, description = $2 WHERE id = $3 RETURNING *', [name, description || null, id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Order status not found' });
+        }
+        res.json(result.rows[0]);
+    }
+    catch (error) {
+        if (error.code === '23505') {
+            return res.status(400).json({ error: 'Order status name already exists' });
+        }
+        console.error('Error updating order status:', error);
+        res.status(500).json({ error: 'Failed to update order status' });
+    }
+};
+exports.updateOrderStatus = updateOrderStatus;
+// Delete order status
+const deleteOrderStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await database_1.default.query('DELETE FROM order_status WHERE id = $1 RETURNING *', [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Order status not found' });
+        }
+        res.json({ message: 'Order status deleted successfully', orderStatus: result.rows[0] });
+    }
+    catch (error) {
+        if (error.code === '23503') {
+            return res.status(400).json({ error: 'Cannot delete order status: still in use by orders' });
+        }
+        console.error('Error deleting order status:', error);
+        res.status(500).json({ error: 'Failed to delete order status' });
+    }
+};
+exports.deleteOrderStatus = deleteOrderStatus;

@@ -1,4 +1,35 @@
-var __importDefault=this&&this.__importDefault||function(t){return t&&t.__esModule?t:{default:t}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.updateProductStock=exports.getProductById=exports.getProducts=void 0;let database_1=__importDefault(require("../config/database")),getProducts=async(r,a)=>{try{var o=r.query.page,i=r.query.limit,s=void 0!==o||void 0!==i,d=s?Math.max(parseInt(o||"1",10)||1,1):1,u=s?Math.max(parseInt(i||"10",10)||10,1):0,c=s?(d-1)*u:0,n=r.query.category_id;let t="WHERE is_active = true";var _=[],p=(n&&"1"!==n&&(_.push(n),t+=" AND category_id = $"+_.length),await database_1.default.query("SELECT COUNT(*) FROM products_view "+t,_)),y=parseInt(p.rows[0]?.count||"0",10);let e=`SELECT 
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.updateProductStock = exports.getProductById = exports.getProducts = void 0;
+const database_1 = __importDefault(require("../config/database"));
+const getProducts = async (req, res) => {
+    try {
+        // Pagination parameters (apply only when explicitly provided)
+        const pageQuery = req.query.page;
+        const limitQuery = req.query.limit;
+        const usePagination = pageQuery !== undefined || limitQuery !== undefined;
+        const page = usePagination
+            ? Math.max(parseInt(pageQuery || '1', 10) || 1, 1)
+            : 1;
+        const limit = usePagination
+            ? Math.max(parseInt(limitQuery || '10', 10) || 10, 1)
+            : 0;
+        const offset = usePagination ? (page - 1) * limit : 0;
+        // Filter parameters
+        const { category_id } = req.query;
+        let whereClause = 'WHERE is_active = true';
+        const params = [];
+        if (category_id && category_id !== '1') {
+            params.push(category_id);
+            whereClause += ` AND category_id = $${params.length}`;
+        }
+        // Get total count
+        const countResult = await database_1.default.query(`SELECT COUNT(*) FROM products_view ${whereClause}`, params);
+        const total = parseInt(countResult.rows[0]?.count || '0', 10);
+        let productsQuery = `SELECT 
         id, 
         name, 
         category_id, 
@@ -14,7 +45,33 @@ var __importDefault=this&&this.__importDefault||function(t){return t&&t.__esModu
         is_active, 
         created_at, 
         updated_at 
-       FROM products_view ${t} ORDER BY name`;s&&(_.push(u),_.push(c),e+=` LIMIT $${_.length-1} OFFSET $`+_.length);var g=await database_1.default.query(e,_);a.json({data:g.rows,pagination:{total:y,page:d,limit:s?u:y,pages:s?Math.ceil(y/u):1}})}catch(t){console.error("Get products error:",t),a.status(500).json({error:"Server error fetching products"})}},getProductById=(exports.getProducts=getProducts,async(t,e)=>{try{var r=t.params.id,a=await database_1.default.query(`SELECT 
+       FROM products_view ${whereClause} ORDER BY name`;
+        if (usePagination) {
+            params.push(limit);
+            params.push(offset);
+            productsQuery += ` LIMIT $${params.length - 1} OFFSET $${params.length}`;
+        }
+        const result = await database_1.default.query(productsQuery, params);
+        res.json({
+            data: result.rows,
+            pagination: {
+                total,
+                page,
+                limit: usePagination ? limit : total,
+                pages: usePagination ? Math.ceil(total / limit) : 1,
+            },
+        });
+    }
+    catch (error) {
+        console.error('Get products error:', error);
+        res.status(500).json({ error: 'Server error fetching products' });
+    }
+};
+exports.getProducts = getProducts;
+const getProductById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await database_1.default.query(`SELECT 
         id, 
         name, 
         category_id, 
@@ -31,4 +88,20 @@ var __importDefault=this&&this.__importDefault||function(t){return t&&t.__esModu
         created_at, 
         updated_at 
        FROM products_view
-       WHERE id = $1 AND is_active = true`,[r]);if(0===a.rows.length)return e.status(404).json({error:"Product not found"});e.json({data:a.rows[0]})}catch(t){console.error("Get product error:",t),e.status(500).json({error:"Server error fetching product"})}}),updateProductStock=(exports.getProductById=getProductById,async(t,e)=>(await database_1.default.query("UPDATE products SET stock_quantity = stock_quantity + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *",[e,t])).rows[0]);exports.updateProductStock=updateProductStock;
+       WHERE id = $1 AND is_active = true`, [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Product not found' });
+        }
+        res.json({ data: result.rows[0] });
+    }
+    catch (error) {
+        console.error('Get product error:', error);
+        res.status(500).json({ error: 'Server error fetching product' });
+    }
+};
+exports.getProductById = getProductById;
+const updateProductStock = async (productId, quantityChange) => {
+    const result = await database_1.default.query('UPDATE products SET stock_quantity = stock_quantity + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *', [quantityChange, productId]);
+    return result.rows[0];
+};
+exports.updateProductStock = updateProductStock;

@@ -1,1 +1,49 @@
-var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.testConnection=void 0;let pg_1=require("pg"),dotenv_1=__importDefault(require("dotenv")),dbHost=(dotenv_1.default.config(),String(process.env.DB_HOST||"localhost").trim()),sslMode=String(process.env.DB_SSL_MODE||process.env.DB_SSL||"").toLowerCase(),isLocalHost="localhost"===dbHost||"127.0.0.1"===dbHost||"::1"===dbHost,useSsl=sslMode?"true"===sslMode||"require"===sslMode||"1"===sslMode:!isLocalHost,pool=new pg_1.Pool({host:dbHost,port:parseInt(process.env.DB_PORT||"5432",10),database:process.env.DB_NAME||"krysta_sales",user:process.env.DB_USER||"postgres",password:process.env.DB_PASSWORD||"",max:20,ssl:useSsl?{rejectUnauthorized:!1}:void 0,idleTimeoutMillis:3e4,connectionTimeoutMillis:1e4,keepAlive:!0,keepAliveInitialDelayMillis:1e4}),testConnection=(pool.on("error",e=>{console.error("Unexpected error on idle pg-pool client (non-fatal):",e.message)}),async()=>{try{var e=await pool.connect();return console.log("Database connected successfully"),e.release(),!0}catch(e){return console.error("Database connection failed:",e),!1}});exports.testConnection=testConnection,exports.default=pool;
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.testConnection = void 0;
+const pg_1 = require("pg");
+const dotenv_1 = __importDefault(require("dotenv"));
+dotenv_1.default.config();
+const dbHost = String(process.env.DB_HOST || 'localhost').trim();
+const sslMode = String(process.env.DB_SSL_MODE || process.env.DB_SSL || '').toLowerCase();
+const isLocalHost = dbHost === 'localhost' || dbHost === '127.0.0.1' || dbHost === '::1';
+// If SSL mode is explicitly configured, honor it.
+// Otherwise, default to SSL for non-local database hosts to satisfy managed Postgres pg_hba rules.
+const useSsl = sslMode
+    ? sslMode === 'true' || sslMode === 'require' || sslMode === '1'
+    : !isLocalHost;
+const pool = new pg_1.Pool({
+    host: dbHost,
+    port: parseInt(process.env.DB_PORT || '5432', 10),
+    database: process.env.DB_NAME || 'krysta_sales',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || '',
+    max: 20,
+    ssl: useSsl ? { rejectUnauthorized: false } : undefined,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000, // increased from 2000 — AWS RDS needs more time
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000,
+});
+pool.on('error', (err) => {
+    // Log but do NOT exit — stale connections drop occasionally and the pool will recover
+    console.error('Unexpected error on idle pg-pool client (non-fatal):', err.message);
+});
+// Test database connection
+const testConnection = async () => {
+    try {
+        const client = await pool.connect();
+        console.log('Database connected successfully');
+        client.release();
+        return true;
+    }
+    catch (error) {
+        console.error('Database connection failed:', error);
+        return false;
+    }
+};
+exports.testConnection = testConnection;
+exports.default = pool;

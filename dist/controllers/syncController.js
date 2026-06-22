@@ -1,27 +1,334 @@
-var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.getDailyWorkStatus=exports.closeDay=exports.getSyncQueueStatus=exports.syncLocations=exports.batchSync=void 0;let database_1=__importDefault(require("../config/database")),batchSync=async(e,t)=>{try{var s=e.userId,a=e.body.items;if(console.log(`🔄 Batch sync request - userId: ${s}, items: `+(a?.length||0)),!s)return console.error("❌ Batch sync failed: userId not set. req.user:",e.user?`{id: ${e.user.id}, email: ${e.user.email}}`:"undefined"),t.status(401).json({error:"User not authenticated"});if(!Array.isArray(a)||0===a.length)return t.status(400).json({error:"Items array is required and must not be empty"});var r,o={success:[],failed:[],processed:0};for(r of a)try{switch(r.type){case"order":await syncOrder(s,r),o.success.push({temp_id:r.temp_id,type:"order"});break;case"visit":await syncVisit(s,r),o.success.push({temp_id:r.temp_id,type:"visit"});break;case"location":await syncLocation(s,r),o.success.push({temp_id:r.temp_id,type:"location"});break;case"payment":await syncPayment(s,r),o.success.push({temp_id:r.temp_id,type:"payment"});break;default:o.failed.push({temp_id:r.temp_id,error:"Unknown item type: "+r.type})}o.processed++}catch(e){o.failed.push({temp_id:r.temp_id,error:e.message})}t.json({success:!0,summary:{total:a.length,successful:o.success.length,failed:o.failed.length},results:o})}catch(e){console.error("Error in batch sync:",e),t.status(500).json({error:"Batch sync failed"})}},syncOrder=(exports.batchSync=batchSync,async(e,t)=>{t=t.data;if(0<(await database_1.default.query("SELECT id FROM orders WHERE order_number = $1",[t.order_number])).rows.length)return{success:!1,reason:"Order already exists"};var s=(await database_1.default.query(`INSERT INTO orders (
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getDailyWorkStatus = exports.closeDay = exports.getSyncQueueStatus = exports.syncLocations = exports.batchSync = void 0;
+const database_1 = __importDefault(require("../config/database"));
+// Batch sync multiple items
+const batchSync = async (req, res) => {
+    try {
+        const userId = req.userId;
+        const { items } = req.body;
+        console.log(`🔄 Batch sync request - userId: ${userId}, items: ${items?.length || 0}`);
+        if (!userId) {
+            console.error(`❌ Batch sync failed: userId not set. req.user:`, req.user ? `{id: ${req.user.id}, email: ${req.user.email}}` : 'undefined');
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+        if (!Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ error: 'Items array is required and must not be empty' });
+        }
+        const results = {
+            success: [],
+            failed: [],
+            processed: 0
+        };
+        for (const item of items) {
+            try {
+                switch (item.type) {
+                    case 'order':
+                        await syncOrder(userId, item);
+                        results.success.push({ temp_id: item.temp_id, type: 'order' });
+                        break;
+                    case 'visit':
+                        await syncVisit(userId, item);
+                        results.success.push({ temp_id: item.temp_id, type: 'visit' });
+                        break;
+                    case 'location':
+                        await syncLocation(userId, item);
+                        results.success.push({ temp_id: item.temp_id, type: 'location' });
+                        break;
+                    case 'payment':
+                        await syncPayment(userId, item);
+                        results.success.push({ temp_id: item.temp_id, type: 'payment' });
+                        break;
+                    default:
+                        results.failed.push({
+                            temp_id: item.temp_id,
+                            error: `Unknown item type: ${item.type}`
+                        });
+                }
+                results.processed++;
+            }
+            catch (error) {
+                results.failed.push({
+                    temp_id: item.temp_id,
+                    error: error.message
+                });
+            }
+        }
+        res.json({
+            success: true,
+            summary: {
+                total: items.length,
+                successful: results.success.length,
+                failed: results.failed.length
+            },
+            results
+        });
+    }
+    catch (error) {
+        console.error('Error in batch sync:', error);
+        res.status(500).json({ error: 'Batch sync failed' });
+    }
+};
+exports.batchSync = batchSync;
+// Sync individual order
+const syncOrder = async (userId, item) => {
+    const orderData = item.data;
+    // Check if order already exists
+    const existing = await database_1.default.query('SELECT id FROM orders WHERE order_number = $1', [orderData.order_number]);
+    if (existing.rows.length > 0) {
+        // Order already synced
+        return { success: false, reason: 'Order already exists' };
+    }
+    // Create order
+    const result = await database_1.default.query(`INSERT INTO orders (
       order_number, user_id, dealer_id, subtotal, discount, tax, total, 
       payment_method, notes, status, sync_status, offline_created
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-    RETURNING id`,[t.order_number,e,t.dealer_id,t.subtotal,t.discount||0,t.tax||0,t.total,t.payment_method,t.notes,t.status||"pending","synced",!0])).rows[0].id;if(Array.isArray(t.items))for(var a of t.items)await database_1.default.query(`INSERT INTO order_items (
+    RETURNING id`, [
+        orderData.order_number,
+        userId,
+        orderData.dealer_id,
+        orderData.subtotal,
+        orderData.discount || 0,
+        orderData.tax || 0,
+        orderData.total,
+        orderData.payment_method,
+        orderData.notes,
+        orderData.status || 'pending',
+        'synced',
+        true
+    ]);
+    const orderId = result.rows[0].id;
+    // Insert order items
+    if (Array.isArray(orderData.items)) {
+        for (const orderItem of orderData.items) {
+            await database_1.default.query(`INSERT INTO order_items (
           order_id, product_id, product_name, quantity, unit_price, total_price
-        ) VALUES ($1, $2, $3, $4, $5, $6)`,[s,a.product_id,a.product_name,a.quantity,a.unit_price,a.total_price]);return{success:!0,order_id:s}}),syncVisit=async(e,t)=>{t=t.data;return{success:!0,visit_id:(await database_1.default.query(`INSERT INTO dealer_visits (
+        ) VALUES ($1, $2, $3, $4, $5, $6)`, [
+                orderId,
+                orderItem.product_id,
+                orderItem.product_name,
+                orderItem.quantity,
+                orderItem.unit_price,
+                orderItem.total_price
+            ]);
+        }
+    }
+    return { success: true, order_id: orderId };
+};
+// Sync dealer visit
+const syncVisit = async (userId, item) => {
+    const visitData = item.data;
+    const result = await database_1.default.query(`INSERT INTO dealer_visits (
       user_id, dealer_id, check_in_time, check_out_time, check_in_latitude, 
       check_in_longitude, check_out_latitude, check_out_longitude, notes, sync_status
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-    RETURNING id`,[e,t.dealer_id,t.check_in_time,t.check_out_time||null,t.check_in_latitude,t.check_in_longitude,t.check_out_latitude||null,t.check_out_longitude||null,t.notes,"synced"])).rows[0].id}},syncLocation=async(e,t)=>{t=t.data;return{success:!0,location_id:(await database_1.default.query(`INSERT INTO location_tracking (
+    RETURNING id`, [
+        userId,
+        visitData.dealer_id,
+        visitData.check_in_time,
+        visitData.check_out_time || null,
+        visitData.check_in_latitude,
+        visitData.check_in_longitude,
+        visitData.check_out_latitude || null,
+        visitData.check_out_longitude || null,
+        visitData.notes,
+        'synced'
+    ]);
+    return { success: true, visit_id: result.rows[0].id };
+};
+// Sync location point
+const syncLocation = async (userId, item) => {
+    const locationData = item.data;
+    const result = await database_1.default.query(`INSERT INTO location_tracking (
       user_id, latitude, longitude, accuracy, speed, is_background_location, 
       sync_status, recorded_at
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    RETURNING id`,[e,t.latitude,t.longitude,t.accuracy||null,t.speed||null,t.is_background_location||!1,"synced",t.recorded_at||t.timestamp||new Date])).rows[0].id}},syncPayment=async(e,t)=>{t=t.data;try{return{success:!0,payment_id:(await database_1.default.query(`INSERT INTO payments (
+    RETURNING id`, [
+        userId,
+        locationData.latitude,
+        locationData.longitude,
+        locationData.accuracy || null,
+        locationData.speed || null,
+        locationData.is_background_location || false,
+        'synced',
+        locationData.recorded_at || locationData.timestamp || new Date()
+    ]);
+    return { success: true, location_id: result.rows[0].id };
+};
+// Sync payment
+const syncPayment = async (userId, item) => {
+    const paymentData = item.data;
+    // Note: This assumes a payments table exists
+    // If not, it will need to be created
+    try {
+        const result = await database_1.default.query(`INSERT INTO payments (
         user_id, dealer_id, order_id, amount, payment_method, 
         reference_number, notes, sync_status
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING id`,[e,t.dealer_id,t.order_id||null,t.amount,t.payment_method,t.reference_number,t.notes,"synced"])).rows[0].id}}catch(e){return console.log("Payments table not found, skipping payment sync"),{success:!1,reason:"Payments table not found"}}},syncLocations=async(e,t)=>{try{var s=e.userId,a=e.body.locations;if(console.log(`🔄 Location sync request - userId: ${s}, locations: `+(a?.length||0)),!s)return console.error("❌ Location sync failed: userId not set. req.user:",e.user?`{id: ${e.user.id}, email: ${e.user.email}}`:"undefined","Token header:",e.headers.authorization?"present":"missing"),t.status(401).json({error:"User not authenticated"});if(!Array.isArray(a)||0===a.length)return t.status(400).json({error:"Locations array is required"});var r,o=[];for(r of a)try{var n=await database_1.default.query(`INSERT INTO location_tracking (
+      RETURNING id`, [
+            userId,
+            paymentData.dealer_id,
+            paymentData.order_id || null,
+            paymentData.amount,
+            paymentData.payment_method,
+            paymentData.reference_number,
+            paymentData.notes,
+            'synced'
+        ]);
+        return { success: true, payment_id: result.rows[0].id };
+    }
+    catch (error) {
+        // If payments table doesn't exist, skip for now
+        console.log('Payments table not found, skipping payment sync');
+        return { success: false, reason: 'Payments table not found' };
+    }
+};
+// Sync pending locations (highest priority)
+const syncLocations = async (req, res) => {
+    try {
+        const userId = req.userId;
+        const { locations } = req.body;
+        console.log(`🔄 Location sync request - userId: ${userId}, locations: ${locations?.length || 0}`);
+        if (!userId) {
+            console.error(`❌ Location sync failed: userId not set. req.user:`, req.user ? `{id: ${req.user.id}, email: ${req.user.email}}` : 'undefined', 'Token header:', req.headers['authorization'] ? 'present' : 'missing');
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+        if (!Array.isArray(locations) || locations.length === 0) {
+            return res.status(400).json({ error: 'Locations array is required' });
+        }
+        const results = [];
+        for (const location of locations) {
+            try {
+                const result = await database_1.default.query(`INSERT INTO location_tracking (
             user_id, latitude, longitude, accuracy, speed, is_background_location, 
             sync_status, recorded_at
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-          RETURNING id`,[s,r.latitude,r.longitude,r.accuracy||null,r.speed||null,r.is_background_location||!1,"synced",r.recorded_at||r.timestamp||new Date]);o.push({success:!0,location_id:n.rows[0].id,timestamp:r.recorded_at})}catch(e){o.push({success:!1,timestamp:r.recorded_at,error:e.message})}t.json({success:!0,summary:{total:a.length,synced:o.filter(e=>e.success).length,failed:o.filter(e=>!e.success).length},results:o})}catch(e){console.error("Error syncing locations:",e),t.status(500).json({error:"Location sync failed"})}},getSyncQueueStatus=(exports.syncLocations=syncLocations,async(e,t)=>{try{var s=e.userId;if(!s)return t.status(401).json({error:"User not authenticated"});var a=await database_1.default.query("SELECT COUNT(*) as count FROM orders WHERE user_id = $1 AND sync_status = $2",[s,"pending"]),r=await database_1.default.query("SELECT COUNT(*) as count FROM location_tracking WHERE user_id = $1 AND sync_status = $2",[s,"pending"]),o=parseInt(a.rows[0].count||0)+parseInt(r.rows[0].count||0);t.json({success:!0,syncStatus:{pending_items:o,pending_orders:parseInt(a.rows[0].count||0),pending_locations:parseInt(r.rows[0].count||0),sync_enabled:!0,last_sync:new Date}})}catch(e){console.error("Error getting sync queue status:",e),t.status(500).json({error:"Failed to get sync status"})}}),closeDay=(exports.getSyncQueueStatus=getSyncQueueStatus,async(e,t)=>{try{var s=e.userId;if(!s)return t.status(401).json({error:"User not authenticated"});var a=(new Date).toISOString().split("T")[0],r=await database_1.default.query(`INSERT INTO daily_work (user_id, work_date, day_closed, closed_at) 
+          RETURNING id`, [
+                    userId,
+                    location.latitude,
+                    location.longitude,
+                    location.accuracy || null,
+                    location.speed || null,
+                    location.is_background_location || false,
+                    'synced',
+                    location.recorded_at || location.timestamp || new Date()
+                ]);
+                results.push({
+                    success: true,
+                    location_id: result.rows[0].id,
+                    timestamp: location.recorded_at
+                });
+            }
+            catch (error) {
+                results.push({
+                    success: false,
+                    timestamp: location.recorded_at,
+                    error: error.message
+                });
+            }
+        }
+        res.json({
+            success: true,
+            summary: {
+                total: locations.length,
+                synced: results.filter(r => r.success).length,
+                failed: results.filter(r => !r.success).length
+            },
+            results
+        });
+    }
+    catch (error) {
+        console.error('Error syncing locations:', error);
+        res.status(500).json({ error: 'Location sync failed' });
+    }
+};
+exports.syncLocations = syncLocations;
+// Get sync queue status
+const getSyncQueueStatus = async (req, res) => {
+    try {
+        const userId = req.userId;
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+        // Get pending orders
+        const ordersResult = await database_1.default.query('SELECT COUNT(*) as count FROM orders WHERE user_id = $1 AND sync_status = $2', [userId, 'pending']);
+        // Get pending locations
+        const locationsResult = await database_1.default.query('SELECT COUNT(*) as count FROM location_tracking WHERE user_id = $1 AND sync_status = $2', [userId, 'pending']);
+        const totalPending = parseInt(ordersResult.rows[0].count || 0) +
+            parseInt(locationsResult.rows[0].count || 0);
+        res.json({
+            success: true,
+            syncStatus: {
+                pending_items: totalPending,
+                pending_orders: parseInt(ordersResult.rows[0].count || 0),
+                pending_locations: parseInt(locationsResult.rows[0].count || 0),
+                sync_enabled: true,
+                last_sync: new Date()
+            }
+        });
+    }
+    catch (error) {
+        console.error('Error getting sync queue status:', error);
+        res.status(500).json({ error: 'Failed to get sync status' });
+    }
+};
+exports.getSyncQueueStatus = getSyncQueueStatus;
+// Mark day as closed
+const closeDay = async (req, res) => {
+    try {
+        const userId = req.userId;
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+        const today = new Date().toISOString().split('T')[0];
+        const result = await database_1.default.query(`INSERT INTO daily_work (user_id, work_date, day_closed, closed_at) 
        VALUES ($1, $2, true, NOW())
        ON CONFLICT (user_id, work_date) 
        DO UPDATE SET day_closed = true, closed_at = NOW()
-       RETURNING *`,[s,a]);await database_1.default.query("UPDATE users SET last_day_closed_date = NOW() WHERE id = $1",[s]),t.json({success:!0,message:"Day closed successfully",dailyWork:r.rows[0]})}catch(e){console.error("Error closing day:",e),t.status(500).json({error:"Failed to close day"})}}),getDailyWorkStatus=(exports.closeDay=closeDay,async(e,t)=>{try{var s=e.userId;if(!s)return t.status(401).json({error:"User not authenticated"});var a=(new Date).toISOString().split("T")[0],r=(await database_1.default.query("SELECT * FROM daily_work WHERE user_id = $1 AND work_date = $2",[s,a])).rows[0]||{user_id:s,work_date:a,day_closed:!1,closed_at:null,pending_orders_count:0,pending_visits_count:0};t.json({success:!0,dailyWork:r})}catch(e){console.error("Error getting daily work status:",e),t.status(500).json({error:"Failed to get daily work status"})}});exports.getDailyWorkStatus=getDailyWorkStatus;
+       RETURNING *`, [userId, today]);
+        // Update user's last_day_closed_date
+        await database_1.default.query('UPDATE users SET last_day_closed_date = NOW() WHERE id = $1', [userId]);
+        res.json({
+            success: true,
+            message: 'Day closed successfully',
+            dailyWork: result.rows[0]
+        });
+    }
+    catch (error) {
+        console.error('Error closing day:', error);
+        res.status(500).json({ error: 'Failed to close day' });
+    }
+};
+exports.closeDay = closeDay;
+// Get daily work status
+const getDailyWorkStatus = async (req, res) => {
+    try {
+        const userId = req.userId;
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+        const today = new Date().toISOString().split('T')[0];
+        const result = await database_1.default.query('SELECT * FROM daily_work WHERE user_id = $1 AND work_date = $2', [userId, today]);
+        const dailyWork = result.rows[0] || {
+            user_id: userId,
+            work_date: today,
+            day_closed: false,
+            closed_at: null,
+            pending_orders_count: 0,
+            pending_visits_count: 0
+        };
+        res.json({
+            success: true,
+            dailyWork
+        });
+    }
+    catch (error) {
+        console.error('Error getting daily work status:', error);
+        res.status(500).json({ error: 'Failed to get daily work status' });
+    }
+};
+exports.getDailyWorkStatus = getDailyWorkStatus;

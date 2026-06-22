@@ -1,7 +1,19 @@
-var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0});let database_1=__importDefault(require("./config/database")),upsertCheckedInDealersMenu=async()=>{var a=await database_1.default.connect();try{await a.query("BEGIN"),await a.query(`
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const database_1 = __importDefault(require("./config/database"));
+const upsertCheckedInDealersMenu = async () => {
+    const client = await database_1.default.connect();
+    try {
+        await client.query('BEGIN');
+        // Ensure optional visibility column exists for older databases.
+        await client.query(`
       ALTER TABLE menu_items
       ADD COLUMN IF NOT EXISTS show_on_ui BOOLEAN DEFAULT true;
-    `);var e,r=await a.query(`INSERT INTO menu_items (
+    `);
+        const menuInsert = await client.query(`INSERT INTO menu_items (
         key,
         label,
         screen,
@@ -22,6 +34,40 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
         color = EXCLUDED.color,
         is_active = true,
         show_on_ui = true
-      RETURNING id, key, label, screen`,["checkedInDealers","Checked-In Dealers","CheckedInDealers","place","MaterialIcons","#16A085",12]),o=r.rows[0].id,i=await a.query("SELECT id, name FROM roles WHERE LOWER(name) IN ('admin', 'manager', 'director', 'superadmin')");for(e of i.rows)await a.query(`INSERT INTO role_menu_permissions (role_id, menu_item_id)
+      RETURNING id, key, label, screen`, [
+            'checkedInDealers',
+            'Checked-In Dealers',
+            'CheckedInDealers',
+            'place',
+            'MaterialIcons',
+            '#16A085',
+            12,
+        ]);
+        const menuId = menuInsert.rows[0].id;
+        // Grant permission to commonly privileged roles.
+        const roleResult = await client.query(`SELECT id, name FROM roles WHERE LOWER(name) IN ('admin', 'manager', 'director', 'superadmin')`);
+        for (const role of roleResult.rows) {
+            await client.query(`INSERT INTO role_menu_permissions (role_id, menu_item_id)
          VALUES ($1, $2)
-         ON CONFLICT (role_id, menu_item_id) DO NOTHING`,[e.id,o]);await a.query("COMMIT"),console.log("Checked-In Dealers menu item upserted successfully"),console.log("Menu item:",r.rows[0]),console.log("Roles mapped:",i.rows.map(e=>e.name).join(", ")||"none")}catch(e){throw await a.query("ROLLBACK"),console.error("Failed to upsert Checked-In Dealers menu item:",e),e}finally{a.release()}};require.main===module&&upsertCheckedInDealersMenu().then(()=>process.exit(0)).catch(()=>process.exit(1)),exports.default=upsertCheckedInDealersMenu;
+         ON CONFLICT (role_id, menu_item_id) DO NOTHING`, [role.id, menuId]);
+        }
+        await client.query('COMMIT');
+        console.log('Checked-In Dealers menu item upserted successfully');
+        console.log('Menu item:', menuInsert.rows[0]);
+        console.log('Roles mapped:', roleResult.rows.map((r) => r.name).join(', ') || 'none');
+    }
+    catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Failed to upsert Checked-In Dealers menu item:', error);
+        throw error;
+    }
+    finally {
+        client.release();
+    }
+};
+if (require.main === module) {
+    upsertCheckedInDealersMenu()
+        .then(() => process.exit(0))
+        .catch(() => process.exit(1));
+}
+exports.default = upsertCheckedInDealersMenu;

@@ -1,4 +1,15 @@
-var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.getRolePermissions=exports.getAllMenuItems=exports.getMenuItemsForUser=void 0;let database_1=__importDefault(require("../config/database")),getMenuItemsForUser=async(e,r)=>{try{var s=e.user.id,o=await database_1.default.query(`
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getRolePermissions = exports.getAllMenuItems = exports.getMenuItemsForUser = void 0;
+const database_1 = __importDefault(require("../config/database"));
+const getMenuItemsForUser = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        // Get user's role and menu items
+        const result = await database_1.default.query(`
       SELECT DISTINCT 
         m.key,
         m.label,
@@ -13,7 +24,20 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
       JOIN menu_items m ON rmp.menu_item_id = m.id
       WHERE u.id = $1 AND u.is_active = true AND m.is_active = true
       ORDER BY m.display_order;
-    `,[s]);r.json({menuItems:o.rows})}catch(e){console.error("Error fetching menu items:",e),r.status(500).json({error:"Server error fetching menu items"})}},getAllMenuItems=(exports.getMenuItemsForUser=getMenuItemsForUser,async(e,r)=>{try{var s=await database_1.default.query(`
+    `, [userId]);
+        res.json({
+            menuItems: result.rows
+        });
+    }
+    catch (error) {
+        console.error('Error fetching menu items:', error);
+        res.status(500).json({ error: 'Server error fetching menu items' });
+    }
+};
+exports.getMenuItemsForUser = getMenuItemsForUser;
+const getAllMenuItems = async (req, res) => {
+    try {
+        const result = await database_1.default.query(`
       SELECT 
         id,
         key,
@@ -26,7 +50,20 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
         is_active
       FROM menu_items
       ORDER BY display_order;
-    `);r.json({menuItems:s.rows})}catch(e){console.error("Error fetching all menu items:",e),r.status(500).json({error:"Server error"})}}),getRolePermissions=(exports.getAllMenuItems=getAllMenuItems,async(e,s)=>{try{var o=await database_1.default.query(`
+    `);
+        res.json({
+            menuItems: result.rows
+        });
+    }
+    catch (error) {
+        console.error('Error fetching all menu items:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+};
+exports.getAllMenuItems = getAllMenuItems;
+const getRolePermissions = async (req, res) => {
+    try {
+        const result = await database_1.default.query(`
       SELECT 
         r.id as role_id,
         r.name as role_name,
@@ -37,4 +74,31 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
       LEFT JOIN menu_items m ON rmp.menu_item_id = m.id
       WHERE m.is_active = true
       ORDER BY r.id, m.display_order;
-    `);let r={};o.rows.forEach(e=>{r[e.role_id]||(r[e.role_id]={roleId:e.role_id,roleName:e.role_name,menuItems:[]}),e.menu_key&&r[e.role_id].menuItems.push({key:e.menu_key,label:e.menu_label})}),s.json({permissions:Object.values(r)})}catch(e){console.error("Error fetching role permissions:",e),s.status(500).json({error:"Server error"})}});exports.getRolePermissions=getRolePermissions;
+    `);
+        // Group by role
+        const permissions = {};
+        result.rows.forEach(row => {
+            if (!permissions[row.role_id]) {
+                permissions[row.role_id] = {
+                    roleId: row.role_id,
+                    roleName: row.role_name,
+                    menuItems: []
+                };
+            }
+            if (row.menu_key) {
+                permissions[row.role_id].menuItems.push({
+                    key: row.menu_key,
+                    label: row.menu_label
+                });
+            }
+        });
+        res.json({
+            permissions: Object.values(permissions)
+        });
+    }
+    catch (error) {
+        console.error('Error fetching role permissions:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+};
+exports.getRolePermissions = getRolePermissions;

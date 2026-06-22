@@ -1,1 +1,22 @@
-var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0});let express_1=__importDefault(require("express")),auth_1=require("../middleware/auth"),orderStatusController_1=require("../controllers/orderStatusController"),router=express_1.default.Router();router.use(auth_1.authenticateToken),router.get("/",orderStatusController_1.getAllOrderStatuses),router.get("/:id",orderStatusController_1.getOrderStatusById),router.post("/",orderStatusController_1.createOrderStatus),router.put("/:id",orderStatusController_1.updateOrderStatus),router.delete("/:id",orderStatusController_1.deleteOrderStatus),exports.default=router;
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+const auth_1 = require("../middleware/auth");
+const orderStatusController_1 = require("../controllers/orderStatusController");
+const router = express_1.default.Router();
+// All routes require authentication
+router.use(auth_1.authenticateToken);
+// Get all order statuses
+router.get('/', orderStatusController_1.getAllOrderStatuses);
+// Get single order status
+router.get('/:id', orderStatusController_1.getOrderStatusById);
+// Create new order status
+router.post('/', orderStatusController_1.createOrderStatus);
+// Update order status
+router.put('/:id', orderStatusController_1.updateOrderStatus);
+// Delete order status
+router.delete('/:id', orderStatusController_1.deleteOrderStatus);
+exports.default = router;

@@ -1,5 +1,82 @@
-var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.initializeNotificationsTable=exports.updateNotificationPreferences=exports.getNotificationPreferences=exports.sendNotification=exports.getPendingWorkSummary=exports.getPendingWork=exports.registerDeviceToken=void 0;let database_1=__importDefault(require("../config/database")),registerDeviceToken=async(e,t)=>{try{var r,i=e.body.deviceToken,o=e.userId;return i?0===(r=await database_1.default.query("UPDATE users SET push_notification_token = $1 WHERE id = $2 RETURNING id, name, email",[i,o])).rows.length?t.status(404).json({error:"User not found"}):void t.json({success:!0,message:"Device token registered successfully",user:r.rows[0]}):t.status(400).json({error:"Device token is required"})}catch(e){console.error("Error registering device token:",e),t.status(500).json({error:"Failed to register device token"})}},getPendingWork=(exports.registerDeviceToken=registerDeviceToken,async(e,t)=>{try{var r=e.userId,i=(new Date).toISOString().split("T")[0],o=(await database_1.default.query("SELECT * FROM daily_work WHERE user_id = $1 AND work_date = $2",[r,i])).rows[0]||{day_closed:!1,pending_orders_count:0,pending_visits_count:0},s=await database_1.default.query("SELECT id, order_number, dealer_id, total, status FROM orders WHERE user_id = $1 AND status = $2 ORDER BY created_at DESC",[r,"pending"]),n=await database_1.default.query(`SELECT id, dealer_id, check_in_time FROM dealer_visits 
-       WHERE user_id = $1 AND DATE(check_in_time) = $2 AND check_out_time IS NULL`,[r,i]);t.json({success:!0,dayStatus:{day_closed:o.day_closed,closed_at:o.closed_at},pendingWork:{pending_orders_count:o.pending_orders_count||s.rows.length,pending_visits_count:o.pending_visits_count||n.rows.length,orders:s.rows,visits:n.rows}})}catch(e){console.error("Error fetching pending work:",e),t.status(500).json({error:"Failed to fetch pending work"})}}),getPendingWorkSummary=(exports.getPendingWork=getPendingWork,async(e,t)=>{try{var r=e.userRole?.name;if("Manager"!==r&&"Admin"!==r)return t.status(403).json({error:"Insufficient permissions"});var i=(new Date).toISOString().split("T")[0],o=await database_1.default.query(`SELECT 
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.initializeNotificationsTable = exports.updateNotificationPreferences = exports.getNotificationPreferences = exports.sendNotification = exports.getPendingWorkSummary = exports.getPendingWork = exports.registerDeviceToken = void 0;
+const database_1 = __importDefault(require("../config/database"));
+// Register device for push notifications
+const registerDeviceToken = async (req, res) => {
+    try {
+        const { deviceToken } = req.body;
+        const userId = req.userId;
+        if (!deviceToken) {
+            return res.status(400).json({ error: 'Device token is required' });
+        }
+        const result = await database_1.default.query('UPDATE users SET push_notification_token = $1 WHERE id = $2 RETURNING id, name, email', [deviceToken, userId]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        res.json({
+            success: true,
+            message: 'Device token registered successfully',
+            user: result.rows[0]
+        });
+    }
+    catch (error) {
+        console.error('Error registering device token:', error);
+        res.status(500).json({ error: 'Failed to register device token' });
+    }
+};
+exports.registerDeviceToken = registerDeviceToken;
+// Get pending work for current user
+const getPendingWork = async (req, res) => {
+    try {
+        const userId = req.userId;
+        const today = new Date().toISOString().split('T')[0];
+        // Get daily work status
+        const dailyWorkResult = await database_1.default.query('SELECT * FROM daily_work WHERE user_id = $1 AND work_date = $2', [userId, today]);
+        const dailyWork = dailyWorkResult.rows[0] || {
+            day_closed: false,
+            pending_orders_count: 0,
+            pending_visits_count: 0
+        };
+        // Get pending orders
+        const ordersResult = await database_1.default.query('SELECT id, order_number, dealer_id, total, status FROM orders WHERE user_id = $1 AND status = $2 ORDER BY created_at DESC', [userId, 'pending']);
+        // Get pending dealer visits (not checked out)
+        const visitsResult = await database_1.default.query(`SELECT id, dealer_id, check_in_time FROM dealer_visits 
+       WHERE user_id = $1 AND DATE(check_in_time) = $2 AND check_out_time IS NULL`, [userId, today]);
+        res.json({
+            success: true,
+            dayStatus: {
+                day_closed: dailyWork.day_closed,
+                closed_at: dailyWork.closed_at
+            },
+            pendingWork: {
+                pending_orders_count: dailyWork.pending_orders_count || ordersResult.rows.length,
+                pending_visits_count: dailyWork.pending_visits_count || visitsResult.rows.length,
+                orders: ordersResult.rows,
+                visits: visitsResult.rows
+            }
+        });
+    }
+    catch (error) {
+        console.error('Error fetching pending work:', error);
+        res.status(500).json({ error: 'Failed to fetch pending work' });
+    }
+};
+exports.getPendingWork = getPendingWork;
+// Get pending work summary (Manager/Admin only)
+const getPendingWorkSummary = async (req, res) => {
+    try {
+        const userRole = req.userRole?.name;
+        // Only managers and admins can view this
+        if (userRole !== 'Manager' && userRole !== 'Admin') {
+            return res.status(403).json({ error: 'Insufficient permissions' });
+        }
+        const today = new Date().toISOString().split('T')[0];
+        // Get all users with unclosed days
+        const result = await database_1.default.query(`SELECT 
         u.id, 
         u.name, 
         u.email,
@@ -11,8 +88,116 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
       FROM users u
       LEFT JOIN daily_work dw ON u.id = dw.user_id AND dw.work_date = $1
       WHERE u.role_id = (SELECT id FROM roles WHERE name = 'Sales Agent')
-      ORDER BY dw.day_closed ASC, u.name`,[i]),s=o.rows.filter(e=>!e.day_closed);t.json({success:!0,summary:{total_agents:o.rows.length,unclosed_count:s.length,closed_count:o.rows.filter(e=>e.day_closed).length},unclosedDays:s,allUsers:o.rows})}catch(e){console.error("Error fetching pending work summary:",e),t.status(500).json({error:"Failed to fetch pending work summary"})}}),sendNotification=(exports.getPendingWorkSummary=getPendingWorkSummary,async(e,t)=>{try{var r,{userId:i,title:o,body:s,type:n}=e.body;return i&&o&&s?0===(r=await database_1.default.query("SELECT push_notification_token FROM users WHERE id = $1",[i])).rows.length?t.status(404).json({error:"User not found"}):r.rows[0].push_notification_token?(console.log(`Sending notification to ${i}: ${o} - `+s),await database_1.default.query(`INSERT INTO notifications (user_id, title, body, type, created_at) 
-       VALUES ($1, $2, $3, $4, NOW())`,[i,o,s,n||"general"]),void t.json({success:!0,message:"Notification sent successfully",notificationData:{userId:i,title:o,body:s,type:n||"general"}})):t.status(400).json({error:"User has no registered device"}):t.status(400).json({error:"userId, title, and body are required"})}catch(e){console.error("Error sending notification:",e),t.status(500).json({error:"Failed to send notification"})}}),getNotificationPreferences=(exports.sendNotification=sendNotification,async(e,t)=>{try{var r=e.userId,i=await database_1.default.query("SELECT notification_preferences FROM users WHERE id = $1",[r]);if(0===i.rows.length)return t.status(404).json({error:"User not found"});var o=i.rows[0].notification_preferences||{enabled:!0,daily_reminder:!0,email_alerts:!0};t.json({success:!0,preferences:o})}catch(e){console.error("Error fetching notification preferences:",e),t.status(500).json({error:"Failed to fetch notification preferences"})}}),updateNotificationPreferences=(exports.getNotificationPreferences=getNotificationPreferences,async(e,t)=>{try{var r,i=e.userId,o=e.body.preferences;return o?0===(r=await database_1.default.query("UPDATE users SET notification_preferences = $1 WHERE id = $2 RETURNING notification_preferences",[JSON.stringify(o),i])).rows.length?t.status(404).json({error:"User not found"}):void t.json({success:!0,message:"Notification preferences updated",preferences:r.rows[0].notification_preferences}):t.status(400).json({error:"preferences object is required"})}catch(e){console.error("Error updating notification preferences:",e),t.status(500).json({error:"Failed to update notification preferences"})}}),initializeNotificationsTable=(exports.updateNotificationPreferences=updateNotificationPreferences,async()=>{try{await database_1.default.query(`
+      ORDER BY dw.day_closed ASC, u.name`, [today]);
+        const unclosedDays = result.rows.filter(row => !row.day_closed);
+        res.json({
+            success: true,
+            summary: {
+                total_agents: result.rows.length,
+                unclosed_count: unclosedDays.length,
+                closed_count: result.rows.filter(row => row.day_closed).length
+            },
+            unclosedDays: unclosedDays,
+            allUsers: result.rows
+        });
+    }
+    catch (error) {
+        console.error('Error fetching pending work summary:', error);
+        res.status(500).json({ error: 'Failed to fetch pending work summary' });
+    }
+};
+exports.getPendingWorkSummary = getPendingWorkSummary;
+// Send notification to specific user
+const sendNotification = async (req, res) => {
+    try {
+        const { userId, title, body, type } = req.body;
+        if (!userId || !title || !body) {
+            return res.status(400).json({ error: 'userId, title, and body are required' });
+        }
+        // Get device token
+        const userResult = await database_1.default.query('SELECT push_notification_token FROM users WHERE id = $1', [userId]);
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        const deviceToken = userResult.rows[0].push_notification_token;
+        if (!deviceToken) {
+            return res.status(400).json({ error: 'User has no registered device' });
+        }
+        // In production, send via Expo Push Notifications
+        // For now, we'll log it
+        console.log(`Sending notification to ${userId}: ${title} - ${body}`);
+        // Store notification in database (optional)
+        await database_1.default.query(`INSERT INTO notifications (user_id, title, body, type, created_at) 
+       VALUES ($1, $2, $3, $4, NOW())`, [userId, title, body, type || 'general']);
+        res.json({
+            success: true,
+            message: 'Notification sent successfully',
+            notificationData: {
+                userId,
+                title,
+                body,
+                type: type || 'general'
+            }
+        });
+    }
+    catch (error) {
+        console.error('Error sending notification:', error);
+        res.status(500).json({ error: 'Failed to send notification' });
+    }
+};
+exports.sendNotification = sendNotification;
+// Get notification preferences
+const getNotificationPreferences = async (req, res) => {
+    try {
+        const userId = req.userId;
+        const result = await database_1.default.query('SELECT notification_preferences FROM users WHERE id = $1', [userId]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        const preferences = result.rows[0].notification_preferences || {
+            enabled: true,
+            daily_reminder: true,
+            email_alerts: true
+        };
+        res.json({
+            success: true,
+            preferences
+        });
+    }
+    catch (error) {
+        console.error('Error fetching notification preferences:', error);
+        res.status(500).json({ error: 'Failed to fetch notification preferences' });
+    }
+};
+exports.getNotificationPreferences = getNotificationPreferences;
+// Update notification preferences
+const updateNotificationPreferences = async (req, res) => {
+    try {
+        const userId = req.userId;
+        const { preferences } = req.body;
+        if (!preferences) {
+            return res.status(400).json({ error: 'preferences object is required' });
+        }
+        const result = await database_1.default.query('UPDATE users SET notification_preferences = $1 WHERE id = $2 RETURNING notification_preferences', [JSON.stringify(preferences), userId]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        res.json({
+            success: true,
+            message: 'Notification preferences updated',
+            preferences: result.rows[0].notification_preferences
+        });
+    }
+    catch (error) {
+        console.error('Error updating notification preferences:', error);
+        res.status(500).json({ error: 'Failed to update notification preferences' });
+    }
+};
+exports.updateNotificationPreferences = updateNotificationPreferences;
+// Create notifications table if it doesn't exist
+const initializeNotificationsTable = async () => {
+    try {
+        await database_1.default.query(`
       CREATE TABLE IF NOT EXISTS notifications (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -23,4 +208,13 @@ var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModu
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         read_at TIMESTAMP
       );
-    `),await database_1.default.query("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);"),await database_1.default.query("CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at DESC);"),console.log("Notifications table initialized")}catch(e){console.error("Error initializing notifications table:",e)}});exports.initializeNotificationsTable=initializeNotificationsTable;
+    `);
+        await database_1.default.query('CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);');
+        await database_1.default.query('CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at DESC);');
+        console.log('Notifications table initialized');
+    }
+    catch (error) {
+        console.error('Error initializing notifications table:', error);
+    }
+};
+exports.initializeNotificationsTable = initializeNotificationsTable;

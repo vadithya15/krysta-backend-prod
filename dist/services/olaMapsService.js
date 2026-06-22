@@ -1,1 +1,257 @@
-var __importDefault=this&&this.__importDefault||function(e){return e&&e.__esModule?e:{default:e}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.OlaMapsService=void 0;let axios_1=__importDefault(require("axios")),crypto_1=__importDefault(require("crypto"));class OlaMapsService{constructor(e,t){this.apiKey=e,this.baseUrl=t||"https://api.olamaps.io/routing/v1/routeOptimizer"}generateRouteSignature(e){e=[...e].sort((e,t)=>e-t);return crypto_1.default.createHash("md5").update(e.join(",")).digest("hex")}generateRouteSignatureWithCoordinates(e,t){e=e.map(e=>`${e.dealer_id||"unknown"}_${e.lat.toFixed(4)}_`+e.lng.toFixed(4)).sort().join("|")+"|"+t;return crypto_1.default.createHash("md5").update(e).digest("hex")}async optimizeRoute(a,e,o){try{if(0===a.length)throw new Error("At least one waypoint is required");if(24<a.length)throw new Error("Maximum 24 waypoints allowed");e||a[0];var s=a.map(e=>e.lat+","+e.lng).join("|"),i=new URLSearchParams({locations:s,source:"first",destination:"last",round_trip:(!o).toString(),mode:"driving",steps:"true",overview:"full",language:"en",traffic_metadata:"false",route_preference:"fastest",api_key:this.apiKey}),n=this.baseUrl+"?"+i.toString(),l={},d=await axios_1.default.post(n,l,{headers:{"x-request-id":"req-"+Date.now(),"x-correlation-id":"corr-"+Date.now()},timeout:3e4});if("SUCCESS"!==d.data.status)throw new Error("Ola Maps API error: "+d.data.status);var u=d.data.routes[0];let t=0,r=0;u.legs&&0<u.legs.length&&u.legs.forEach(e=>{t+=e.distance||0,r+=e.duration||0}),console.log("📍 Ola Maps Response Structure:",{status:d.data.status,routes_count:d.data.routes?.length,waypoint_order:d.data.waypoint_order,waypoint_order_count:d.data.waypoint_order?.length,legs_count:u.legs?.length,has_overview_polyline:!!u.overview_polyline,overview_polyline_length:u.overview_polyline?.length||0,overview_polyline_value:u.overview_polyline?u.overview_polyline.substring(0,50)+"...":"MISSING",all_route_keys:Object.keys(u)});var p=(d.data.waypoint_order||[]).map(e=>a[e]);return console.log("📦 Ordered Waypoints Mapped:",{count:p.length,sample:p[0]}),{waypoints:a,orderedWaypoints:p,totalDistance:t/1e3,totalDuration:r,geometry:u.overview_polyline||"",provider:"ola",rawResponse:d.data}}catch(e){if(e.response)throw new Error(`Ola Maps API error: ${e.response.status} - `+JSON.stringify(e.response.data));throw e}}async getRoute(a,o){try{if(!this.isValidCoordinate(a)||!this.isValidCoordinate(o))throw new Error("Invalid coordinates provided");var s=`${a.lat},${a.lng}|${o.lat},`+o.lng,e=new URLSearchParams({locations:s,source:"first",destination:"last",round_trip:"false",mode:"driving",steps:"true",overview:"full",language:"en",api_key:this.apiKey}),i=this.baseUrl+"?"+e.toString(),n=(console.log(`🗺️ Ola Maps Route API: from (${a.lat},${a.lng}) to (${o.lat},${o.lng})`),await axios_1.default.post(i,{},{headers:{"x-request-id":"req-"+Date.now(),"x-correlation-id":"corr-"+Date.now()},timeout:3e4}));if("SUCCESS"!==n.data.status)throw new Error("Ola Maps API error: "+n.data.status);if(!n.data.routes||!n.data.routes[0])throw new Error("No route found between these coordinates");var l=n.data.routes[0];let t=0,r=0;return l.legs&&0<l.legs.length&&l.legs.forEach(e=>{t+=e.distance||0,r+=e.duration||0}),{distance:t,duration:r,geometry:l.overview_polyline||""}}catch(e){if(404===e.response?.status)throw s=e.response?.data?.error_msg||"Route not found",console.error("❌ Ola Maps 404 Error: "+s),new Error("Route not found: Coordinates may be outside service area or unreachable. "+`From (${a.lat},${a.lng}) to (${o.lat},${o.lng})`);if(e.response)throw new Error(`Ola Maps API error: ${e.response.status} - `+JSON.stringify(e.response.data));throw e}}isValidCoordinate(e){var t=e.lat,e=e.lng;return"number"==typeof t&&"number"==typeof e&&-90<=t&&t<=90&&-180<=e&&e<=180}async getDistance(e,t){return(await this.getRoute(e,t)).distance/1e3}async getDistanceMatrix(e,t){try{var r=this.baseUrl+"/distancematrix",a={origins:e.map(e=>e.lat+","+e.lng).join("|"),destinations:t.map(e=>e.lat+","+e.lng).join("|"),api_key:this.apiKey},o=await axios_1.default.get(r,{params:a,timeout:3e4}),s=[];if(o.data.rows)for(var i of o.data.rows){var n=i.elements.map(e=>e.distance?e.distance/1e3:0);s.push(n)}return s}catch(e){if(e.response)throw new Error(`Ola Maps API error: ${e.response.status} - `+JSON.stringify(e.response.data));throw e}}}exports.OlaMapsService=OlaMapsService,exports.default=OlaMapsService;
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.OlaMapsService = void 0;
+const axios_1 = __importDefault(require("axios"));
+const crypto_1 = __importDefault(require("crypto"));
+class OlaMapsService {
+    constructor(apiKey, baseUrl) {
+        this.apiKey = apiKey;
+        // Use custom URL from settings if provided, otherwise use default
+        this.baseUrl = baseUrl || 'https://api.olamaps.io/routing/v1/routeOptimizer';
+    }
+    /**
+     * Generate a signature for the route based on sorted dealer IDs
+     * DEPRECATED: Use generateRouteSignatureWithCoordinates for better cache validity
+     */
+    generateRouteSignature(dealerIds) {
+        const sorted = [...dealerIds].sort((a, b) => a - b);
+        return crypto_1.default.createHash('md5').update(sorted.join(',')).digest('hex');
+    }
+    /**
+     * Generate a hardened route signature including coordinates and date
+     * This prevents false cache hits when dealer coordinates change
+     * Format: sorted(dealer_id_lat_lng_rounded) + plan_date
+     * @param waypoints Array of waypoints with lat/lng
+     * @param planDate Date string (YYYY-MM-DD)
+     */
+    generateRouteSignatureWithCoordinates(waypoints, planDate) {
+        // Build signature components from waypoints with rounded coordinates
+        // Round to 4 decimal places (~11 meters precision) to avoid floating point issues
+        const components = waypoints
+            .map(wp => `${wp.dealer_id || 'unknown'}_${wp.lat.toFixed(4)}_${wp.lng.toFixed(4)}`)
+            .sort()
+            .join('|');
+        // Include plan date in signature
+        const signatureInput = `${components}|${planDate}`;
+        return crypto_1.default.createHash('md5').update(signatureInput).digest('hex');
+    }
+    /**
+     * Optimize route using Ola Maps Route Optimizer API
+     * @param waypoints Array of waypoints with lat/lng
+     * @param startPoint Optional start point (defaults to first waypoint)
+     * @param endPoint Optional end point (defaults to start point for round trip)
+     */
+    async optimizeRoute(waypoints, startPoint, endPoint) {
+        try {
+            if (waypoints.length === 0) {
+                throw new Error('At least one waypoint is required');
+            }
+            if (waypoints.length > 24) {
+                throw new Error('Maximum 24 waypoints allowed');
+            }
+            // Prepare coordinates for Ola Maps API
+            // Format: Build locations string from all waypoints using pipe separator
+            const start = startPoint || waypoints[0];
+            const end = endPoint || start; // Round trip by default
+            // Build locations string: all waypoints in format "lat,lng|lat,lng|..."
+            const locationsString = waypoints
+                .map(wp => `${wp.lat},${wp.lng}`)
+                .join('|');
+            // Use the configured URL with proper parameters according to API docs
+            const params = new URLSearchParams({
+                locations: locationsString,
+                source: 'first',
+                destination: 'last',
+                round_trip: (!endPoint).toString(), // true for round trip
+                mode: 'driving',
+                steps: 'true',
+                overview: 'full',
+                language: 'en',
+                traffic_metadata: 'false',
+                route_preference: 'fastest',
+                api_key: this.apiKey
+            });
+            const urlWithParams = `${this.baseUrl}?${params.toString()}`;
+            const requestBody = {};
+            const response = await axios_1.default.post(urlWithParams, requestBody, {
+                headers: {
+                    'x-request-id': `req-${Date.now()}`,
+                    'x-correlation-id': `corr-${Date.now()}`
+                },
+                timeout: 30000, // 30 second timeout
+            });
+            if (response.data.status !== 'SUCCESS') {
+                throw new Error(`Ola Maps API error: ${response.data.status}`);
+            }
+            // Parse the optimized route
+            // API returns routes array with legs inside
+            const route = response.data.routes[0];
+            // Sum up all legs for total distance and duration
+            let totalDistance = 0;
+            let totalDuration = 0;
+            if (route.legs && route.legs.length > 0) {
+                route.legs.forEach((leg) => {
+                    totalDistance += leg.distance || 0;
+                    totalDuration += leg.duration || 0;
+                });
+            }
+            // DEBUG: Log Ola response structure including overview_polyline
+            console.log('📍 Ola Maps Response Structure:', {
+                status: response.data.status,
+                routes_count: response.data.routes?.length,
+                waypoint_order: response.data.waypoint_order,
+                waypoint_order_count: response.data.waypoint_order?.length,
+                legs_count: route.legs?.length,
+                has_overview_polyline: !!route.overview_polyline,
+                overview_polyline_length: route.overview_polyline?.length || 0,
+                overview_polyline_value: route.overview_polyline ? route.overview_polyline.substring(0, 50) + '...' : 'MISSING',
+                all_route_keys: Object.keys(route),
+            });
+            const orderedWaypoints = (response.data.waypoint_order || []).map((index) => {
+                return waypoints[index];
+            });
+            console.log('📦 Ordered Waypoints Mapped:', {
+                count: orderedWaypoints.length,
+                sample: orderedWaypoints[0],
+            });
+            return {
+                waypoints,
+                orderedWaypoints,
+                totalDistance: totalDistance / 1000, // Convert meters to km
+                totalDuration: totalDuration,
+                geometry: route.overview_polyline || '', // Use overview_polyline for full route geometry
+                provider: 'ola',
+                rawResponse: response.data,
+            };
+        }
+        catch (error) {
+            if (error.response) {
+                throw new Error(`Ola Maps API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+            }
+            throw error;
+        }
+    }
+    /**
+     * Get route between two points (not optimized, just A to B)
+     * Uses same routeOptimizer endpoint with 2 waypoints
+     */
+    async getRoute(from, to) {
+        try {
+            // Validate coordinates
+            if (!this.isValidCoordinate(from) || !this.isValidCoordinate(to)) {
+                throw new Error('Invalid coordinates provided');
+            }
+            // Build locations string (same format as optimizeRoute)
+            const locationsString = `${from.lat},${from.lng}|${to.lat},${to.lng}`;
+            const params = new URLSearchParams({
+                locations: locationsString,
+                source: 'first',
+                destination: 'last',
+                round_trip: 'false',
+                mode: 'driving',
+                steps: 'true',
+                overview: 'full',
+                language: 'en',
+                api_key: this.apiKey
+            });
+            const urlWithParams = `${this.baseUrl}?${params.toString()}`;
+            console.log(`🗺️ Ola Maps Route API: from (${from.lat},${from.lng}) to (${to.lat},${to.lng})`);
+            const response = await axios_1.default.post(urlWithParams, {}, {
+                headers: {
+                    'x-request-id': `req-${Date.now()}`,
+                    'x-correlation-id': `corr-${Date.now()}`
+                },
+                timeout: 30000
+            });
+            if (response.data.status !== 'SUCCESS') {
+                throw new Error(`Ola Maps API error: ${response.data.status}`);
+            }
+            if (!response.data.routes || !response.data.routes[0]) {
+                throw new Error('No route found between these coordinates');
+            }
+            const route = response.data.routes[0];
+            // Sum up legs for total distance and duration
+            let totalDistance = 0;
+            let totalDuration = 0;
+            if (route.legs && route.legs.length > 0) {
+                route.legs.forEach((leg) => {
+                    totalDistance += leg.distance || 0;
+                    totalDuration += leg.duration || 0;
+                });
+            }
+            return {
+                distance: totalDistance,
+                duration: totalDuration,
+                geometry: route.overview_polyline || '', // Use overview_polyline
+            };
+        }
+        catch (error) {
+            if (error.response?.status === 404) {
+                const apiError = error.response?.data?.error_msg || 'Route not found';
+                console.error(`❌ Ola Maps 404 Error: ${apiError}`);
+                throw new Error(`Route not found: Coordinates may be outside service area or unreachable. ` +
+                    `From (${from.lat},${from.lng}) to (${to.lat},${to.lng})`);
+            }
+            if (error.response) {
+                throw new Error(`Ola Maps API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+            }
+            throw error;
+        }
+    }
+    /**
+     * Validate coordinate is in valid range
+     */
+    isValidCoordinate(waypoint) {
+        const lat = waypoint.lat;
+        const lng = waypoint.lng;
+        if (typeof lat !== 'number' || typeof lng !== 'number') {
+            return false;
+        }
+        // Valid latitude: -90 to 90, longitude: -180 to 180
+        return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+    }
+    /**
+     * Calculate distance between two points
+     */
+    async getDistance(from, to) {
+        const route = await this.getRoute(from, to);
+        return route.distance / 1000; // Convert to km
+    }
+    /**
+     * Get distance matrix for multiple origins and destinations
+     */
+    async getDistanceMatrix(origins, destinations) {
+        try {
+            const url = `${this.baseUrl}/distancematrix`;
+            const originsStr = origins.map(w => `${w.lat},${w.lng}`).join('|');
+            const destinationsStr = destinations.map(w => `${w.lat},${w.lng}`).join('|');
+            const params = {
+                origins: originsStr,
+                destinations: destinationsStr,
+                api_key: this.apiKey
+            };
+            const response = await axios_1.default.get(url, { params, timeout: 30000 });
+            // Parse distance matrix response
+            const matrix = [];
+            if (response.data.rows) {
+                for (const row of response.data.rows) {
+                    const distances = row.elements.map((el) => el.distance ? el.distance / 1000 : 0 // Convert to km
+                    );
+                    matrix.push(distances);
+                }
+            }
+            return matrix;
+        }
+        catch (error) {
+            if (error.response) {
+                throw new Error(`Ola Maps API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+            }
+            throw error;
+        }
+    }
+}
+exports.OlaMapsService = OlaMapsService;
+exports.default = OlaMapsService;

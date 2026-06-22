@@ -1,17 +1,39 @@
-var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModule?E:{default:E}};Object.defineProperty(exports,"__esModule",{value:!0});let database_1=__importDefault(require("./database")),INIT_DB_LOCK_KEY=98432157,isPgTypeRaceError=E=>"23505"===E?.code&&"pg_type_typname_nsp_index"===String(E?.constraint||""),initializeDatabase=async(e=1)=>{var E=await database_1.default.connect();try{console.log("Creating database tables..."),await E.query(`
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const database_1 = __importDefault(require("./database"));
+const INIT_DB_LOCK_KEY = 98432157;
+const isPgTypeRaceError = (error) => {
+    return (error?.code === '23505' &&
+        String(error?.constraint || '') === 'pg_type_typname_nsp_index');
+};
+const initializeDatabase = async (attempt = 1) => {
+    const client = await database_1.default.connect();
+    try {
+        // Prevent concurrent initDb runs across processes/instances.
+        // await client.query('SELECT pg_advisory_lock($1)', [INIT_DB_LOCK_KEY]);
+        console.log('Creating database tables...');
+        // Create roles table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS roles (
         id SERIAL PRIMARY KEY,
         name VARCHAR(50) UNIQUE NOT NULL,
         description TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Insert default roles
+        await client.query(`
       INSERT INTO roles (name, description) VALUES
         ('Sales Agent', 'Field sales representative'),
         ('Manager', 'Sales manager with team oversight'),
         ('Admin', 'System administrator with full access')
       ON CONFLICT (name) DO NOTHING;
-    `),await E.query(`
+    `);
+        // Create users table (sales reps)
+        await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
@@ -28,7 +50,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Create dealers table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS dealers (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
@@ -55,7 +79,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Ensure new dealer columns exist for existing databases
+        await client.query(`
       ALTER TABLE dealers
         ADD COLUMN IF NOT EXISTS lno VARCHAR(100),
         ADD COLUMN IF NOT EXISTS area VARCHAR(100),
@@ -66,13 +92,17 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         ADD COLUMN IF NOT EXISTS region_id INTEGER,
         ADD COLUMN IF NOT EXISTS latitude DECIMAL(10, 8),
         ADD COLUMN IF NOT EXISTS longitude DECIMAL(11, 8);
-    `),await E.query(`
+    `);
+        // Create regions table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS regions (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) UNIQUE NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Create areas table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS areas (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
@@ -80,13 +110,17 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(name, region_id)
       );
-    `),await E.query(`
+    `);
+        // Create states table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS states (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) UNIQUE NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Create cities table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS cities (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
@@ -94,7 +128,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(name, state_id)
       );
-    `),await E.query(`
+    `);
+        // Add foreign keys for normalized dealer location
+        await client.query(`
       DO $$
       BEGIN
         IF NOT EXISTS (
@@ -129,7 +165,10 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
             ADD CONSTRAINT fk_dealers_region FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL;
         END IF;
       END $$;
-    `),await E.query("DROP VIEW IF EXISTS dealers_view"),await E.query(`
+    `);
+        // Create or update dealers_view for API compatibility
+        await client.query('DROP VIEW IF EXISTS dealers_view');
+        await client.query(`
       CREATE VIEW dealers_view AS
       SELECT
         d.id,
@@ -161,7 +200,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
       LEFT JOIN states s ON s.id = d.state_id
       LEFT JOIN areas a ON a.id = d.area_id
       LEFT JOIN regions r ON r.id = d.region_id;
-    `),await E.query(`
+    `);
+        // Create user_regions mapping table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS user_regions (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -169,10 +210,13 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(user_id, region_id)
       );
-    `),await E.query(`
+    `);
+        await client.query(`
       CREATE INDEX IF NOT EXISTS idx_user_regions_user ON user_regions(user_id);
       CREATE INDEX IF NOT EXISTS idx_user_regions_region ON user_regions(region_id);
-    `),await E.query(`
+    `);
+        // Create categories table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS categories (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL UNIQUE,
@@ -180,7 +224,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         is_active BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Create products table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS products (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
@@ -196,7 +242,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Create orders table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS orders (
         id SERIAL PRIMARY KEY,
         order_number VARCHAR(50) UNIQUE NOT NULL,
@@ -219,28 +267,38 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Ensure new payment columns exist for existing databases
+        await client.query(`
       ALTER TABLE orders
         ADD COLUMN IF NOT EXISTS payment_type VARCHAR(50) DEFAULT 'full',
         ADD COLUMN IF NOT EXISTS advance_amount DECIMAL(10, 2) DEFAULT 0,
         ADD COLUMN IF NOT EXISTS remaining_balance DECIMAL(10, 2) DEFAULT 0,
         ADD COLUMN IF NOT EXISTS balance_paid DECIMAL(10, 2) DEFAULT 0;
-    `),await E.query(`
+    `);
+        // Create payment_status table for status lookup
+        await client.query(`
       CREATE TABLE IF NOT EXISTS payment_status (
         id SERIAL PRIMARY KEY,
         name VARCHAR(50) UNIQUE NOT NULL,
         description TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Insert default payment statuses
+        await client.query(`
       INSERT INTO payment_status (id, name, description) VALUES
         (1, 'pending', 'Payment transaction pending approval'),
         (2, 'completed', 'Payment transaction approved and completed'),
         (3, 'rejected', 'Payment transaction rejected')
       ON CONFLICT (name) DO NOTHING;
-    `),await E.query(`
+    `);
+        // Ensure the sequence is set correctly
+        await client.query(`
       SELECT setval('payment_status_id_seq', (SELECT MAX(id) FROM payment_status));
-    `),await E.query(`
+    `);
+        // Create payment_transactions table for tracking all payments
+        await client.query(`
       CREATE TABLE IF NOT EXISTS payment_transactions (
         id SERIAL PRIMARY KEY,
         order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
@@ -257,7 +315,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Migrate existing status column to status_id if column exists
+        await client.query(`
       DO $$ 
       BEGIN
         -- Add status_id column if it doesn't exist
@@ -283,11 +343,15 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
           ALTER TABLE payment_transactions DROP COLUMN status;
         END IF;
       END $$;
-    `),await E.query(`
+    `);
+        // Create index for faster queries
+        await client.query(`
       CREATE INDEX IF NOT EXISTS idx_payment_transactions_order_id ON payment_transactions(order_id);
       CREATE INDEX IF NOT EXISTS idx_payment_transactions_dealer_id ON payment_transactions(dealer_id);
       CREATE INDEX IF NOT EXISTS idx_payment_transactions_user_id ON payment_transactions(user_id);
-    `),await E.query(`
+    `);
+        // Create targets table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS targets (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -301,7 +365,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       );
-    `),await E.query(`
+    `);
+        // Create daily_work table for tracking day closure status
+        await client.query(`
       CREATE TABLE IF NOT EXISTS daily_work (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -313,7 +379,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(user_id, work_date)
       );
-    `),await E.query(`
+    `);
+        // Create dealer_plans table for day planning
+        await client.query(`
       CREATE TABLE IF NOT EXISTS dealer_plans (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
@@ -323,7 +391,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Add foreign keys for dealer_plans if missing
+        await client.query(`
       DO $$
       BEGIN
         IF NOT EXISTS (
@@ -342,7 +412,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
             ADD CONSTRAINT fk_dealer_plans_dealer FOREIGN KEY (dealer_id) REFERENCES dealers(id) ON DELETE CASCADE;
         END IF;
       END $$;
-    `),await E.query(`
+    `);
+        // Create OTP table for phone-based authentication
+        await client.query(`
       CREATE TABLE IF NOT EXISTS otp_verification (
         id SERIAL PRIMARY KEY,
         phone_number VARCHAR(20) NOT NULL UNIQUE,
@@ -354,7 +426,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Create audit_logs table for tracking user actions and authentication events
+        await client.query(`
       CREATE TABLE IF NOT EXISTS audit_logs (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -368,7 +442,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         metadata JSON,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Create order_items table
+        await client.query(`
       CREATE TABLE IF NOT EXISTS order_items (
         id SERIAL PRIMARY KEY,
         order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
@@ -379,7 +455,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         total_price DECIMAL(10, 2) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Create location_tracking table for GPS tracking
+        await client.query(`
       CREATE TABLE IF NOT EXISTS location_tracking (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -392,7 +470,23 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         recorded_at TIMESTAMP NOT NULL DEFAULT NOW(),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);"),await E.query("CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);"),await E.query("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);"),await E.query("CREATE INDEX IF NOT EXISTS idx_orders_dealer ON orders(dealer_id);"),await E.query("CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);"),await E.query("CREATE INDEX IF NOT EXISTS idx_location_tracking_user ON location_tracking(user_id);"),await E.query("CREATE INDEX IF NOT EXISTS idx_location_tracking_recorded_at ON location_tracking(recorded_at DESC);"),await E.query("CREATE INDEX IF NOT EXISTS idx_daily_work_user_date ON daily_work(user_id, work_date);"),await E.query("CREATE INDEX IF NOT EXISTS idx_targets_user_type ON targets(user_id, target_type);"),await E.query("CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);"),await E.query("CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);"),await E.query("CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);"),await E.query("CREATE INDEX IF NOT EXISTS idx_audit_logs_phone ON audit_logs(phone_number);"),await E.query(`
+    `);
+        // Create indexes for better performance
+        await client.query('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_orders_dealer ON orders(dealer_id);');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_location_tracking_user ON location_tracking(user_id);');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_location_tracking_recorded_at ON location_tracking(recorded_at DESC);');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_daily_work_user_date ON daily_work(user_id, work_date);');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_targets_user_type ON targets(user_id, target_type);');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_audit_logs_phone ON audit_logs(phone_number);');
+        // Insert sample categories
+        await client.query(`
       INSERT INTO categories (name, description) VALUES
         ('All', 'All products'),
         ('Beverages', 'Drinks and beverages'),
@@ -401,7 +495,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         ('Groceries', 'Grocery items'),
         ('Krysta Life', 'Krysta Life product range')
       ON CONFLICT (name) DO NOTHING;
-    `),await E.query(`
+    `);
+        // Insert sample products (using subqueries to get correct category IDs)
+        await client.query(`
       INSERT INTO products (name, category_id, description, price, stock_quantity, unit) VALUES
         ('Coca Cola 500ml', (SELECT id FROM categories WHERE name = 'Beverages' LIMIT 1), 'Refreshing cola drink', 40.00, 1000, 'bottle'),
         ('Pepsi 500ml', (SELECT id FROM categories WHERE name = 'Beverages' LIMIT 1), 'Classic cola beverage', 40.00, 950, 'bottle'),
@@ -412,7 +508,9 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         ('Maggi Noodles', (SELECT id FROM categories WHERE name = 'Groceries' LIMIT 1), 'Instant noodles', 12.00, 800, 'pack'),
         ('Parle-G Biscuits', (SELECT id FROM categories WHERE name = 'Snacks' LIMIT 1), 'Glucose biscuits', 10.00, 600, 'pack')
       ON CONFLICT DO NOTHING;
-    `),await E.query(`
+    `);
+        // Insert Krysta Life products (Arrow to Alpha)
+        await client.query(`
       WITH krysta_life_category AS (
         SELECT id FROM categories WHERE name = 'Krysta Life' LIMIT 1
       ),
@@ -465,13 +563,17 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
       WHERE NOT EXISTS (
         SELECT 1 FROM products p WHERE p.name = v.name
       );
-    `),await E.query(`
+    `);
+        // Insert sample dealers
+        await client.query(`
       INSERT INTO dealers (name, contact_person, phone, email, city, state, credit_limit) VALUES
         ('Raj Traders', 'Rajesh Kumar', '9876543210', 'raj@traders.com', 'Mumbai', 'Maharashtra', 100000.00),
         ('Sharma Store', 'Amit Sharma', '9876543211', 'amit@sharma.com', 'Delhi', 'Delhi', 75000.00),
         ('Modern Retail', 'Priya Singh', '9876543212', 'priya@modern.com', 'Bangalore', 'Karnataka', 150000.00)
       ON CONFLICT DO NOTHING;
-    `),await E.query(`
+    `);
+        // Create organizations table (Multi-tenant support)
+        await client.query(`
       CREATE TABLE IF NOT EXISTS organizations (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
@@ -488,8 +590,43 @@ var __importDefault=this&&this.__importDefault||function(E){return E&&E.__esModu
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `),await E.query(`
+    `);
+        // Insert default organization if not exists
+        await client.query(`
       INSERT INTO organizations (name, slug, description, is_active)
       VALUES ('Krysta Default', 'krysta-default', 'Default organization for Krysta Sales Tracker', true)
       ON CONFLICT (slug) DO NOTHING;
-    `),console.log("Database initialized successfully!")}catch(E){if(isPgTypeRaceError(E)&&e<2)return console.warn("Detected transient PostgreSQL type creation race during init. Retrying database initialization once..."),initializeDatabase(e+1);throw console.error("Error initializing database:",E),E}finally{try{await E.query("SELECT pg_advisory_unlock($1)",[INIT_DB_LOCK_KEY])}catch{}E.release()}};require.main===module&&initializeDatabase().then(()=>{console.log("Database setup complete"),process.exit(0)}).catch(E=>{console.error("Database setup failed:",E),process.exit(1)}),exports.default=initializeDatabase;
+    `);
+        console.log('Database initialized successfully!');
+    }
+    catch (error) {
+        if (isPgTypeRaceError(error) && attempt < 2) {
+            console.warn('Detected transient PostgreSQL type creation race during init. Retrying database initialization once...');
+            return initializeDatabase(attempt + 1);
+        }
+        console.error('Error initializing database:', error);
+        throw error;
+    }
+    finally {
+        try {
+            await client.query('SELECT pg_advisory_unlock($1)', [INIT_DB_LOCK_KEY]);
+        }
+        catch {
+            // Ignore unlock errors; closing the session releases advisory lock anyway.
+        }
+        client.release();
+    }
+};
+// Run initialization if this file is executed directly
+if (require.main === module) {
+    initializeDatabase()
+        .then(() => {
+        console.log('Database setup complete');
+        process.exit(0);
+    })
+        .catch((error) => {
+        console.error('Database setup failed:', error);
+        process.exit(1);
+    });
+}
+exports.default = initializeDatabase;

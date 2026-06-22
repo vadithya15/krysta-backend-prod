@@ -1,1 +1,109 @@
-var __importDefault=this&&this.__importDefault||function(s){return s&&s.__esModule?s:{default:s}};Object.defineProperty(exports,"__esModule",{value:!0}),exports.deleteVisitReason=exports.updateVisitReason=exports.createVisitReason=exports.getVisitReasonById=exports.getAllVisitReasons=void 0;let database_1=__importDefault(require("../config/database")),getAllVisitReasons=async(s,e)=>{try{var t=await database_1.default.query("SELECT * FROM visit_reasons ORDER BY name ASC");console.log("✅ Returning visit reasons:",{count:t.rows.length,sample:t.rows[0],all:JSON.stringify(t.rows,null,2)}),e.json(t.rows)}catch(s){console.error("Error fetching visit reasons:",s),e.status(500).json({error:"Failed to fetch visit reasons"})}},getVisitReasonById=(exports.getAllVisitReasons=getAllVisitReasons,async(s,e)=>{try{var t=s.params.id,r=await database_1.default.query("SELECT * FROM visit_reasons WHERE id = $1",[t]);if(0===r.rows.length)return e.status(404).json({error:"Visit reason not found"});e.json({data:r.rows[0]})}catch(s){console.error("Error fetching visit reason:",s),e.status(500).json({error:"Failed to fetch visit reason"})}}),createVisitReason=(exports.getVisitReasonById=getVisitReasonById,async(s,e)=>{try{var{name:t,description:r}=s.body;if(!t)return e.status(400).json({error:"Name is required"});var a=await database_1.default.query("INSERT INTO visit_reasons (name, description) VALUES ($1, $2) RETURNING *",[t,r||null]);e.status(201).json({data:a.rows[0]})}catch(s){if("23505"===s.code)return e.status(400).json({error:"Visit reason name already exists"});console.error("Error creating visit reason:",s),e.status(500).json({error:"Failed to create visit reason"})}}),updateVisitReason=(exports.createVisitReason=createVisitReason,async(s,e)=>{try{var t,r=s.params.id,{name:a,description:o,is_active:i,show_on_ui:n}=s.body,d=await database_1.default.query("SELECT * FROM visit_reasons WHERE id = $1",[r]);return 0===d.rows.length?e.status(404).json({error:"Visit reason not found"}):0===(t=await database_1.default.query("UPDATE visit_reasons SET name = $1, description = $2, is_active = $3, show_on_ui = $4 WHERE id = $5 RETURNING *",[void 0!==a?a:d.rows[0].name,void 0!==o?o:d.rows[0].description,void 0!==i?i:d.rows[0].is_active,void 0!==n?n:d.rows[0].show_on_ui,r])).rows.length?e.status(404).json({error:"Visit reason not found"}):void e.json({data:t.rows[0]})}catch(s){if("23505"===s.code)return e.status(400).json({error:"Visit reason name already exists"});console.error("Error updating visit reason:",s),e.status(500).json({error:"Failed to update visit reason"})}}),deleteVisitReason=(exports.updateVisitReason=updateVisitReason,async(s,e)=>{try{var t=s.params.id,r=await database_1.default.query("DELETE FROM visit_reasons WHERE id = $1 RETURNING *",[t]);if(0===r.rows.length)return e.status(404).json({error:"Visit reason not found"});e.json({message:"Visit reason deleted successfully",visitReason:r.rows[0]})}catch(s){if("23503"===s.code)return e.status(400).json({error:"Cannot delete visit reason: still in use by visits"});console.error("Error deleting visit reason:",s),e.status(500).json({error:"Failed to delete visit reason"})}});exports.deleteVisitReason=deleteVisitReason;
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.deleteVisitReason = exports.updateVisitReason = exports.createVisitReason = exports.getVisitReasonById = exports.getAllVisitReasons = void 0;
+const database_1 = __importDefault(require("../config/database"));
+// Get all visit reasons
+const getAllVisitReasons = async (req, res) => {
+    try {
+        const result = await database_1.default.query('SELECT * FROM visit_reasons ORDER BY name ASC');
+        console.log('✅ Returning visit reasons:', {
+            count: result.rows.length,
+            sample: result.rows[0],
+            all: JSON.stringify(result.rows, null, 2)
+        });
+        res.json(result.rows);
+    }
+    catch (error) {
+        console.error('Error fetching visit reasons:', error);
+        res.status(500).json({ error: 'Failed to fetch visit reasons' });
+    }
+};
+exports.getAllVisitReasons = getAllVisitReasons;
+// Get single visit reason by ID
+const getVisitReasonById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await database_1.default.query('SELECT * FROM visit_reasons WHERE id = $1', [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Visit reason not found' });
+        }
+        res.json({ data: result.rows[0] });
+    }
+    catch (error) {
+        console.error('Error fetching visit reason:', error);
+        res.status(500).json({ error: 'Failed to fetch visit reason' });
+    }
+};
+exports.getVisitReasonById = getVisitReasonById;
+// Create new visit reason
+const createVisitReason = async (req, res) => {
+    try {
+        const { name, description } = req.body;
+        if (!name) {
+            return res.status(400).json({ error: 'Name is required' });
+        }
+        const result = await database_1.default.query('INSERT INTO visit_reasons (name, description) VALUES ($1, $2) RETURNING *', [name, description || null]);
+        res.status(201).json({ data: result.rows[0] });
+    }
+    catch (error) {
+        if (error.code === '23505') {
+            return res.status(400).json({ error: 'Visit reason name already exists' });
+        }
+        console.error('Error creating visit reason:', error);
+        res.status(500).json({ error: 'Failed to create visit reason' });
+    }
+};
+exports.createVisitReason = createVisitReason;
+// Update visit reason
+const updateVisitReason = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, description, is_active, show_on_ui } = req.body;
+        // Get current visit reason first
+        const current = await database_1.default.query('SELECT * FROM visit_reasons WHERE id = $1', [id]);
+        if (current.rows.length === 0) {
+            return res.status(404).json({ error: 'Visit reason not found' });
+        }
+        const result = await database_1.default.query('UPDATE visit_reasons SET name = $1, description = $2, is_active = $3, show_on_ui = $4 WHERE id = $5 RETURNING *', [
+            name !== undefined ? name : current.rows[0].name,
+            description !== undefined ? description : current.rows[0].description,
+            is_active !== undefined ? is_active : current.rows[0].is_active,
+            show_on_ui !== undefined ? show_on_ui : current.rows[0].show_on_ui,
+            id
+        ]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Visit reason not found' });
+        }
+        res.json({ data: result.rows[0] });
+    }
+    catch (error) {
+        if (error.code === '23505') {
+            return res.status(400).json({ error: 'Visit reason name already exists' });
+        }
+        console.error('Error updating visit reason:', error);
+        res.status(500).json({ error: 'Failed to update visit reason' });
+    }
+};
+exports.updateVisitReason = updateVisitReason;
+// Delete visit reason
+const deleteVisitReason = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await database_1.default.query('DELETE FROM visit_reasons WHERE id = $1 RETURNING *', [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Visit reason not found' });
+        }
+        res.json({ message: 'Visit reason deleted successfully', visitReason: result.rows[0] });
+    }
+    catch (error) {
+        if (error.code === '23503') {
+            return res.status(400).json({ error: 'Cannot delete visit reason: still in use by visits' });
+        }
+        console.error('Error deleting visit reason:', error);
+        res.status(500).json({ error: 'Failed to delete visit reason' });
+    }
+};
+exports.deleteVisitReason = deleteVisitReason;
