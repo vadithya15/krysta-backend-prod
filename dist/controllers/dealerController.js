@@ -130,6 +130,17 @@ const toBooleanOrDefault = (value, fallback) => {
         return false;
     return fallback;
 };
+const normalizeRoleName = (role) => {
+    return String(role || '').trim().toLowerCase();
+};
+const hasDealerFullAccessRole = (role) => {
+    const normalized = normalizeRoleName(role);
+    return (normalized === 'admin' ||
+        normalized === 'superadmin' ||
+        normalized === 'director' ||
+        normalized === 'board of directors' ||
+        normalized.includes('director'));
+};
 const normalizedSqlMatch = (column, paramIndex) => {
     return `REGEXP_REPLACE(LOWER(COALESCE(${column}::text, '')), '[^a-z0-9]+', '', 'g') = REGEXP_REPLACE(LOWER($${paramIndex}::text), '[^a-z0-9]+', '', 'g')`;
 };
@@ -368,7 +379,7 @@ const getDealers = async (req, res) => {
          LEFT JOIN roles ON u.role_id = roles.id 
          WHERE u.id = $1`, [userId]);
             const userRole = userResult.rows[0]?.role_name?.toLowerCase();
-            const isAdmin = userRole === 'superadmin' || userRole === 'admin' || userRole === 'director';
+            const isAdmin = hasDealerFullAccessRole(userRole);
             // Only apply region filter for non-admin users
             if (!isAdmin) {
                 // Access order:
@@ -425,6 +436,10 @@ const getDealers = async (req, res) => {
         const page = Math.floor(offset / limit) + 1;
         const pages = limit > 0 ? Math.ceil(total / limit) : 1;
         res.json({
+            dealers: dataResult.rows,
+            total,
+            limit,
+            offset,
             data: dataResult.rows,
             pagination: {
                 total,
@@ -455,7 +470,7 @@ const getDealerById = async (req, res) => {
        LEFT JOIN roles ON u.role_id = roles.id 
        WHERE u.id = $1`, [userId]);
         const userRole = userResult.rows[0]?.role_name?.toLowerCase();
-        const isAdmin = userRole === 'superadmin' || userRole === 'admin' || userRole === 'director';
+        const isAdmin = hasDealerFullAccessRole(userRole);
         let query = `SELECT * FROM dealers_view WHERE id = $1 AND is_active = true`;
         const params = [id];
         // Only apply region filter for non-admin users
@@ -495,7 +510,7 @@ const getDealerById = async (req, res) => {
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Dealer not found' });
         }
-        res.json({ data: result.rows[0] });
+        res.json({ data: result.rows[0], dealer: result.rows[0] });
     }
     catch (error) {
         console.error('Get dealer error:', error);
