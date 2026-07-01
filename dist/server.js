@@ -29,6 +29,7 @@ const settingsRoutes_1 = __importDefault(require("./routes/settingsRoutes"));
 const taRoutes_1 = __importDefault(require("./routes/taRoutes"));
 const organizationRoutes_1 = __importDefault(require("./routes/organizationRoutes"));
 const reportsRoutes_1 = __importDefault(require("./routes/reportsRoutes"));
+const attendanceRoutes_1 = __importDefault(require("./routes/attendanceRoutes"));
 // Admin Panel Master Tables Routes (Phase 2)
 const unitRoutes_1 = __importDefault(require("./routes/unitRoutes"));
 const paymentMethodRoutes_1 = __importDefault(require("./routes/paymentMethodRoutes"));
@@ -75,6 +76,7 @@ app.use('/api/sync', syncRoutes_1.default);
 app.use('/api/settings', settingsRoutes_1.default);
 app.use('/api/ta', taRoutes_1.default);
 app.use('/api/reports', reportsRoutes_1.default);
+app.use('/api/attendance', attendanceRoutes_1.default);
 // Dealer Planning API
 app.use('/api/dealer-planning', dealerPlanningRoutes_1.default);
 // Route Optimization API

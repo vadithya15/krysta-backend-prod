@@ -252,6 +252,14 @@ const getDealerUploadValue = (row, column) => {
     }
     return emptyToNull(row[column]);
 };
+const shouldUpdateDealerUploadColumn = (row, column) => {
+    if (row[column] === undefined || column === 'name')
+        return false;
+    if (['latitude', 'longitude'].includes(column)) {
+        return toNumberOrNull(row[column]) !== null;
+    }
+    return true;
+};
 const getDealerMatch = async (row, dealerColumns, organizationId) => {
     const orgFilter = dealerColumns.has('organization_id') && organizationId
         ? { clause: ' AND organization_id = $2', value: organizationId }
@@ -322,7 +330,7 @@ const upsertDealerUploadRow = async (row, dealerColumns, organizationId) => {
     ].filter((column) => dealerColumns.has(column));
     const existing = await getDealerMatch(row, dealerColumns, organizationId);
     if (existing) {
-        const updateColumns = allowedColumns.filter((column) => row[column] !== undefined && column !== 'name');
+        const updateColumns = allowedColumns.filter((column) => shouldUpdateDealerUploadColumn(row, column));
         if (row.name !== undefined)
             updateColumns.unshift('name');
         if (updateColumns.length === 0) {

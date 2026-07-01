@@ -178,10 +178,32 @@ const getOrders = async (req, res) => {
       SELECT o.*, 
              u.name as sales_rep_name,
              dv.name as dealer_name,
-             dv.city as dealer_city
+             dv.city as dealer_city,
+             dv.phone as dealer_phone,
+             COALESCE(pm.name, o.payment_method) as payment_method_name,
+             COALESCE(
+               json_agg(
+                 json_build_object(
+                   'id', oi.id,
+                   'order_id', oi.order_id,
+                   'product_id', oi.product_id,
+                   'product_name', oi.product_name,
+                   'quantity', oi.quantity,
+                   'unit_price', oi.unit_price,
+                   'total_price', oi.total_price
+                 )
+                 ORDER BY oi.id
+               ) FILTER (WHERE oi.id IS NOT NULL),
+               '[]'::json
+             ) as items
       FROM orders o
       LEFT JOIN users u ON o.user_id = u.id
       LEFT JOIN dealers_view dv ON o.dealer_id = dv.id
+      LEFT JOIN payment_methods pm ON (
+        (o.payment_method ~ '^\\d+$' AND o.payment_method::integer = pm.id)
+        OR lower(o.payment_method) = lower(pm.name)
+      )
+      LEFT JOIN order_items oi ON o.id = oi.order_id
       WHERE o.user_id = ANY($1)
     `;
         const params = [accessibleUserIds];
@@ -191,7 +213,11 @@ const getOrders = async (req, res) => {
             query += ` AND o.status = $${paramCount}`;
             params.push(status);
         }
-        query += ` ORDER BY o.created_at DESC LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
+        query += `
+      GROUP BY o.id, u.name, dv.name, dv.city, dv.phone, pm.name
+      ORDER BY o.created_at DESC
+      LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}
+    `;
         params.push(limit, offset);
         const result = await database_1.default.query(query, params);
         res.json({ orders: result.rows });
@@ -229,10 +255,16 @@ const getOrderDetails = async (orderId, accessibleUserIds) => {
            u.name as sales_rep_name,
            dv.name as dealer_name,
            dv.phone as dealer_phone,
-           dv.address as dealer_address
+           dv.address as dealer_address,
+           dv.gst_number as dealer_gst_number,
+           COALESCE(pm.name, o.payment_method) as payment_method_name
     FROM orders o
     LEFT JOIN users u ON o.user_id = u.id
     LEFT JOIN dealers_view dv ON o.dealer_id = dv.id
+    LEFT JOIN payment_methods pm ON (
+      (o.payment_method ~ '^\\d+$' AND o.payment_method::integer = pm.id)
+      OR lower(o.payment_method) = lower(pm.name)
+    )
     WHERE o.id = $1
   `;
     const params = [orderId];
@@ -378,10 +410,15 @@ const getPendingApprovals = async (req, res) => {
               dv.name as dealer_name,
               dv.city as dealer_city,
               dv.phone as dealer_phone,
-              dv.address as dealer_address
+              dv.address as dealer_address,
+              COALESCE(pm.name, o.payment_method) as payment_method_name
        FROM orders o
        LEFT JOIN users u ON o.user_id = u.id
        LEFT JOIN dealers_view dv ON o.dealer_id = dv.id
+       LEFT JOIN payment_methods pm ON (
+         (o.payment_method ~ '^\\d+$' AND o.payment_method::integer = pm.id)
+         OR lower(o.payment_method) = lower(pm.name)
+       )
        LEFT JOIN payment_transactions pt ON o.id = pt.order_id
        WHERE (o.status = 'pending' OR pt.status_id = 1)
          AND o.user_id = ANY($1)
@@ -417,7 +454,8 @@ const updateOrderApproval = async (req, res) => {
     const client = await database_1.default.connect();
     try {
         const role = req.user?.role;
-        if (!role || (role !== 'Manager' && role !== 'Admin')) {
+        const allowedRoles = [role_access_1.ROLES.ADMIN, role_access_1.ROLES.DIRECTOR, role_access_1.ROLES.REGIONAL_MANAGER, role_access_1.ROLES.MANAGER];
+        if (!role || !allowedRoles.includes(role)) {
             return res.status(403).json({ error: 'Access denied' });
         }
         const { id } = req.params;
@@ -794,6 +832,9 @@ const generateOrderPdf = async (req, res) => {
         if (order.dealer_phone) {
             doc.text(`Phone: ${order.dealer_phone}`, { indent: 20 });
         }
+        if (order.dealer_gst_number) {
+            doc.text(`GSTIN: ${order.dealer_gst_number}`, { indent: 20 });
+        }
         if (order.dealer_address) {
             doc.text(`Address: ${order.dealer_address}`, { indent: 20 });
         }
@@ -827,8 +868,8 @@ const generateOrderPdf = async (req, res) => {
             order.items.forEach((item) => {
                 doc.text(item.product_name, col1X, currentY, { width: 200 });
                 doc.text(item.quantity.toString(), col3X, currentY);
-                doc.text(`₹${Number(item.unit_price).toFixed(2)}`, col4X, currentY);
-                doc.text(`₹${Number(item.total_price).toFixed(2)}`, col5X, currentY);
+                doc.text(`Rs. ${Number(item.unit_price).toFixed(2)}`, col4X, currentY);
+                doc.text(`Rs. ${Number(item.total_price).toFixed(2)}`, col5X, currentY);
                 currentY += 15;
             });
         }
@@ -836,15 +877,24 @@ const generateOrderPdf = async (req, res) => {
         doc.moveTo(col1X - 10, currentY + 5).lineTo(570, currentY + 5).stroke();
         currentY += 15;
         // Payment Summary
+        const subtotal = Number(order.subtotal || 0);
+        const discount = Number(order.discount || 0);
+        const taxAmount = Number(order.tax || 0);
+        const taxableAmount = subtotal - discount;
+        const cgstAmount = taxAmount / 2;
+        const sgstAmount = taxAmount / 2;
         doc.fontSize(12).font('Helvetica-Bold').text('PAYMENT SUMMARY');
         doc.fontSize(10).font('Helvetica');
-        doc.text(`Subtotal: ₹${Number(order.subtotal).toFixed(2)}`, { indent: 20 });
-        if (order.discount > 0) {
-            doc.text(`Discount: -₹${Number(order.discount).toFixed(2)}`, { indent: 20 });
+        doc.text(`Subtotal: Rs. ${subtotal.toFixed(2)}`, { indent: 20 });
+        if (discount > 0) {
+            doc.text(`Discount: -Rs. ${discount.toFixed(2)}`, { indent: 20 });
         }
-        doc.text(`Tax (18%): ₹${Number(order.tax).toFixed(2)}`, { indent: 20 });
+        doc.text(`Taxable Amount: Rs. ${taxableAmount.toFixed(2)}`, { indent: 20 });
+        doc.text(`CGST (9%): Rs. ${cgstAmount.toFixed(2)}`, { indent: 20 });
+        doc.text(`SGST (9%): Rs. ${sgstAmount.toFixed(2)}`, { indent: 20 });
+        doc.text(`Total GST: Rs. ${taxAmount.toFixed(2)}`, { indent: 20 });
         doc.fontSize(11).font('Helvetica-Bold');
-        doc.text(`Total Amount: ₹${Number(order.total).toFixed(2)}`, { indent: 20 });
+        doc.text(`Total Amount: Rs. ${Number(order.total || 0).toFixed(2)}`, { indent: 20 });
         doc.moveDown();
         // Payment Details
         if (order.payment_type) {
@@ -852,9 +902,9 @@ const generateOrderPdf = async (req, res) => {
             doc.fontSize(10).font('Helvetica');
             doc.text(`Type: ${order.payment_type.toUpperCase()}`, { indent: 20 });
             if (order.advance_amount && order.advance_amount > 0) {
-                doc.text(`Advance Collected: ₹${Number(order.advance_amount).toFixed(2)}`, { indent: 20 });
+                doc.text(`Advance Collected: Rs. ${Number(order.advance_amount).toFixed(2)}`, { indent: 20 });
                 if (order.remaining_balance && order.remaining_balance > 0) {
-                    doc.text(`Outstanding Due: ₹${Number(order.remaining_balance).toFixed(2)}`, { indent: 20 });
+                    doc.text(`Outstanding Due: Rs. ${Number(order.remaining_balance).toFixed(2)}`, { indent: 20 });
                 }
             }
             doc.moveDown();
